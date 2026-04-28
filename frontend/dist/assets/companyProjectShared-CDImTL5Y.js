@@ -1,0 +1,1 @@
+var e=[{label:`中国`,value:`CN`},{label:`美国`,value:`US`},{label:`新加坡`,value:`SG`},{label:`德国`,value:`DE`},{label:`阿联酋`,value:`AE`}];function t(t){return e.find(e=>e.value===t)?.label??t}export{t};

@@ -10,7 +10,7 @@ public class BusinessModuleUpdateCommand {
     private String parentCode;
     private String enabledFlag;
     private Integer sortOrder;
-    private String securityLevel;
+    private String securityLevelCode;
     private String integrationType;
     private String description;
     private String remark;

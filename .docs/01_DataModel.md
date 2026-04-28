@@ -13,6 +13,7 @@
 命名规范："fdc_" + 用途说明 + "表名后缀"
 
 命名示例：fdc_document_organization_t 文档组织表
+执行口径：如文档命名与实际数据库主线不一致，统一以实际数据库主线命名为准。
 
 ## 数据模型后缀规范
 
@@ -216,14 +217,14 @@
 - `fdc_audit_log_t`（操作日志） 1 --- N `fdc_doc_log_att_t`（日志补充附件）
 - `fdc_document_t`（文档） 1 --- N `fdc_arch_storage_t`（档案物理信息，多对一或一对多）
 - `fdc_document_t`（文档） N --- 1 `fdc_volume_t`（册）
-- `fdc_doc_export_task_t`（导出任务） 1 --- N `fdc_doc_export_task_item_t`（导出明细）
+- `fdc_workspace_io_job_t`（导入/导出任务中心）统一承载导入查询与导出查询任务
 - `fdc_file_t`（文件） 记录系统内各种来源和平台的文件元数据
 
 ### 5.2 表字典
 
 #### 5.2.1 fdc_document_t（文档信息表）
 
-用途：合并原文档表与档案表，记录从上游集成、核销、签收至成册前的全生命周期信息。采用本表 100 个扩展属性字段设计。
+用途：合并原文档表与档案表，记录从上游集成、核销、签收至成册前的全生命周期信息。字段定义以实际数据库为准。
 
 
 | 字段中文名 | 字段名 | 数据类型 | 主键(PK) | 非空(NOT NULL) | 唯一(UNIQUE) | 外键(FK) | 备注 |
@@ -262,8 +263,11 @@
 | 档案描述 | arch_description | NVARCHAR2(500) |  | N |  |  |  |
 | 档案类型 | arch_type_code | NVARCHAR2(60) |  | N |  |  |  |
 | 附件数量 | attachment_qty | INT4 |  | N |  |  |  |
-| 扩展字段1-100 | attr1~attr100 | NVARCHAR2(500) |  | N |  |  | 扩展字段统一文本口径 |
-| 删除标识 | delete_flag | INT1 |  | Y |  |  |  |
+| 扩展字段1-40 | attr1~attr40 | NVARCHAR2(500) |  | N |  |  | 文本扩展字段 |
+| 扩展字段41-60 | attr41~attr60 | DECIMAL |  | N |  |  | 数值扩展字段 |
+| 扩展字段61-80 | attr61~attr80 | DATE |  | N |  |  | 日期扩展字段 |
+| 扩展字段81-100 | attr81~attr100 | TIMESTAMP |  | N |  |  | 时间扩展字段（非档期字段） |
+| 删除标识 | delete_flag | NVARCHAR2(1) |  | Y |  |  |  |
 | 创建人 | created_by | INT8 |  | Y |  |  |  |
 | 创建时间 | creation_date | TIMESTAMP |  | Y |  |  |  |
 | 更新人 | last_updated_by | INT8 |  | Y |  |  |  |
@@ -286,12 +290,16 @@
 | 附件类别 | attach_category | VARCHAR(30) |  | N |  | LOOKUP: FDC_ATTACH_CATEGORY |
 | 附件类型 | att_type | VARCHAR(30) |  | N |  |  |
 | 有效标识 | enable_flag | CHAR(1) |  | Y |  | 'Y' |
-| 删除标识 | delete_flag | CHAR(1) |  | Y |  | 'N' |
+| 删除标识 | delete_flag | NVARCHAR2(1) |  | Y |  | 'N' |
 | 创建人 | created_by | BIGINT |  | Y |  |  |
 | 创建日期 | creation_date | TIMESTAMP |  | Y |  |  |
 | 最后修改人 | last_updated_by | BIGINT |  | Y |  |  |
 | 最后修改日期 | last_update_date | TIMESTAMP |  | Y |  |  |
 | 最后修改版本 | last_update_version | INT4 |  | Y |  |  | 0 |
+| 扩展字段1-20 | attribute1~attribute20 | NVARCHAR2(500) |  | N |  |  | 文本扩展字段 |
+| 扩展字段21-30 | attribute21~attribute30 | DECIMAL |  | N |  |  | 数值扩展字段 |
+| 扩展字段31-40 | attribute31~attribute40 | DATE |  | N |  |  | 日期扩展字段 |
+| 扩展字段41-50 | attribute41~attribute50 | TIMESTAMP |  | N |  |  | 时间扩展字段（非档期字段） |
 
 #### 5.2.3 fdc_audit_log_t（业务操作审计日志表）
 
@@ -330,7 +338,7 @@
 | 档案入库人 | storage_person | BIGINT |  | N | tpl_user_t | 对应 `tpl_user_t.user_id` |
 | 档案入库时间 | storage_time | TIMESTAMP |  | N |  |  |
 | 有效标识 | enable_flag | CHAR(1) |  | Y |  | 'Y' |
-| 删除标识 | delete_flag | CHAR(1) |  | Y |  | 'N' |
+| 删除标识 | delete_flag | NVARCHAR2(1) |  | Y |  | 'N' |
 
 #### 5.2.5 fdc_volume_t（册信息表）
 
@@ -360,9 +368,37 @@
 | 存储平台 | storage_platform | VARCHAR(60) |  | Y |  | 如：MINIO, OBS, LOCAL, EDM |
 | MD5校验值 | file_md5 | VARCHAR(64) |  | N |  |  |
 | 有效标识 | enable_flag | CHAR(1) |  | Y |  | 'Y' |
-| 删除标识 | delete_flag | CHAR(1) |  | Y |  | 'N' |
+| 删除标识 | delete_flag | NVARCHAR2(1) |  | Y |  | 'N' |
 | 创建人 | created_by | BIGINT |  | Y |  |  |
 | 创建时间 | creation_date | TIMESTAMP |  | Y |  |  |
+
+#### 5.2.7 fdc_workspace_io_job_t（导入/导出任务中心）
+
+用途：统一承载工作空间导入查询、导出查询任务。
+
+| 字段中文名 | 字段名 | 数据类型 | 主键(PK) | 非空(NOT NULL) | 备注 |
+|---|---|---|---|---|---|
+| 任务ID | job_id | BIGINT | Y | Y |  |
+| 任务类型 | job_type | VARCHAR(30) |  | Y | `EXPORT_QUERY` / `IMPORT_QUERY` 等 |
+| 数据类型 | data_type | VARCHAR(30) |  | N |  |
+| 任务名称 | job_name | VARCHAR(200) |  | Y |  |
+| 文档类型编码 | document_type_code | VARCHAR(60) |  | N |  |
+| 查询配置 | query_config_json | TEXT |  | N |  |
+| 输入文件名 | input_file_name | VARCHAR(200) |  | N |  |
+| 输入总条数 | input_total | INT4 |  | N |  |
+| 结果总条数 | result_total | INT4 |  | N |  |
+| 任务状态 | job_status | VARCHAR(20) |  | Y |  |
+| 错误信息 | error_message | VARCHAR(500) |  | N |  |
+| 失败文件CSV | failed_file_csv | TEXT |  | N |  |
+| 导出格式 | export_file_format | VARCHAR(20) |  | N |  |
+| 结果内容 | result_artifact_text | TEXT |  | N |  |
+| 结果过期时间 | artifact_expires_at | TIMESTAMP |  | N | 非档期字段统一 TIMESTAMP |
+| 删除标识 | delete_flag | NVARCHAR2(1) |  | Y |  |
+| 创建人 | created_by | BIGINT |  | Y |  |
+| 创建时间 | creation_date | TIMESTAMP |  | Y |  |
+| 最后修改人 | last_updated_by | BIGINT |  | Y |  |
+| 最后修改时间 | last_update_date | TIMESTAMP |  | Y |  |
+| 租户ID | tenantid | BIGINT |  | Y |  |
 
 ---
 

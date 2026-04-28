@@ -1,0 +1,1 @@
+import{n as e,t}from"./http-BPn9GfZr.js";var n=()=>t(e.get(`/api/security/user-roles/users`)),r=n=>t(e.get(`/api/security/user-roles/users/duty-profile`,{params:{userName:n}})),i=()=>t(e.get(`/api/security/user-roles/roles`)),a=n=>t(e.get(`/api/security/user-roles/config/${n}`)),o=n=>t(e.post(`/api/security/user-roles/config`,n));export{o as a,n as i,r as n,a as r,i as t};

@@ -14,6 +14,9 @@ public class BusinessModuleNodeResponse {
     private Integer levelNum;
     private String ancestorPath;
     private String enabledFlag;
+    private String securityLevelCode;
+    private String securityLevelName;
+    /** 兼容旧前端字段，值与 securityLevelName 相同 */
     private String securityLevel;
     private String integrationType;
     private String description;

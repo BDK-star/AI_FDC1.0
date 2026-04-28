@@ -1,12 +1,18 @@
 import http, { apiRequest } from '../http'
 import type { ApiResponse } from '../http'
 
+/** 与后端 {@code com.smartarchive.security.domain.User} / tpl_user_t 序列化字段一致 */
 export interface User {
   userId: number
-  username: string
-  realName: string
-  email: string
-  status: string
+  userName: string
+  /** 旧前端/缓存可能仍使用小写字段名 */
+  username?: string
+  employeeNo?: string | null
+  dutyDepartment?: string | null
+  workCountryCode?: string | null
+  email?: string | null
+  phone?: string | null
+  status?: string | null
 }
 
 export interface Role {

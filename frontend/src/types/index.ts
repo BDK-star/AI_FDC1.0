@@ -594,6 +594,9 @@ export interface BusinessModuleNode {
   levelNum: number
   ancestorPath?: string
   enabledFlag: 'Y' | 'N'
+  securityLevelCode?: string
+  securityLevelName?: string
+  /** 兼容字段，与 securityLevelName 相同 */
   securityLevel?: string
   integrationType?: string
   description?: string
@@ -609,7 +612,7 @@ export interface BusinessModuleExtField {
   fieldCode: string
   moduleCode: string
   fieldScope: 'BASIC' | 'ATTACHMENT'
-  applicationFunctions?: ('应收' | '移交')[]
+  applicationFunctions?: ('应归档数据' | '移交')[]
   extAttribute?: string
   fieldName: string
   englishFieldName?: string

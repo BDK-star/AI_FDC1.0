@@ -47,6 +47,7 @@ export interface ArchiveCreateCommand {
   businessCode?: string
   documentName: string
   dutyPerson: string
+  dutyPersonId?: number
   dutyDepartment: string
   documentDate: string
   securityLevelCode: string
@@ -118,6 +119,7 @@ export interface PendingDocumentQueryCommand {
   country?: string
   repOffice?: string
   region?: string
+  dutyPerson?: string
   /** 与后端登录用户 id 对齐；未传则不按创建人过滤 */
   createdByUserId?: number
 }
@@ -341,6 +343,7 @@ export interface PendingDocumentWriteCommand {
   documentName: string
   documentDate: string
   dutyPerson: string
+  dutyPersonId?: number
   dutyDepartment?: string
   carrierTypeCode: string
   sourceSystem?: string

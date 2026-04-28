@@ -67,6 +67,64 @@ BEGIN
     END LOOP;
 END $$;
 
+-- Repair: some databases at v12 never had arc_archive_object / wh_location (manual cleanup,
+-- partial restore, or non-standard init). Section 1 skips rename when the legacy table is
+-- missing; later steps assume the FDC table names exist.
+DO $$
+BEGIN
+    IF to_regclass('public.fdc_archive_object_t') IS NULL THEN
+        CREATE TABLE fdc_archive_object_t (
+            id BIGSERIAL PRIMARY KEY,
+            archive_code VARCHAR(64) NOT NULL UNIQUE,
+            title VARCHAR(255) NOT NULL,
+            archive_type VARCHAR(64) NOT NULL,
+            classification_code VARCHAR(64),
+            security_level VARCHAR(32) NOT NULL,
+            retention_period VARCHAR(64) NOT NULL,
+            organization_name VARCHAR(128) NOT NULL,
+            fonds_name VARCHAR(128),
+            carrier_type VARCHAR(32) NOT NULL,
+            physical_status VARCHAR(32) NOT NULL,
+            digital_status VARCHAR(32) NOT NULL,
+            current_workflow_stage VARCHAR(64) NOT NULL,
+            current_warehouse_code VARCHAR(64),
+            current_location_code VARCHAR(64),
+            responsible_person VARCHAR(64),
+            formed_date DATE,
+            file_count INTEGER DEFAULT 0,
+            page_count INTEGER DEFAULT 0,
+            ai_classified BOOLEAN DEFAULT FALSE,
+            ai_metadata_extracted BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted SMALLINT DEFAULT 0
+        );
+    END IF;
+
+    IF to_regclass('public.fdc_warehouse_location_t') IS NULL THEN
+        CREATE TABLE fdc_warehouse_location_t (
+            id BIGSERIAL PRIMARY KEY,
+            warehouse_code VARCHAR(64) NOT NULL,
+            warehouse_name VARCHAR(128) NOT NULL,
+            area_code VARCHAR(64) NOT NULL,
+            shelf_code VARCHAR(64) NOT NULL,
+            layer_code VARCHAR(64) NOT NULL,
+            location_code VARCHAR(64) NOT NULL UNIQUE,
+            location_name VARCHAR(128) NOT NULL,
+            status VARCHAR(32) NOT NULL,
+            capacity INTEGER NOT NULL DEFAULT 0,
+            occupied_count INTEGER NOT NULL DEFAULT 0,
+            x INTEGER NOT NULL DEFAULT 0,
+            y INTEGER NOT NULL DEFAULT 0,
+            width INTEGER NOT NULL DEFAULT 120,
+            height INTEGER NOT NULL DEFAULT 72,
+            utilization_rate NUMERIC(5, 2) DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted SMALLINT DEFAULT 0
+        );
+    END IF;
+END $$;
+
 -- ========== 2) enabled_flag -> enable_flag ==========
 DO $$
 DECLARE
@@ -254,16 +312,43 @@ BEGIN
 END $$;
 
 -- ========== 4) Legacy soft-delete ==========
-ALTER TABLE fdc_archive_object_t ADD COLUMN IF NOT EXISTS delete_flag CHAR(1) NOT NULL DEFAULT 'N';
-UPDATE fdc_archive_object_t SET delete_flag = CASE WHEN deleted IS NOT NULL AND deleted <> 0 THEN 'Y' ELSE 'N' END;
-ALTER TABLE fdc_archive_object_t DROP COLUMN IF EXISTS deleted;
+DO $$
+BEGIN
+    IF to_regclass('public.fdc_archive_object_t') IS NOT NULL THEN
+        ALTER TABLE fdc_archive_object_t ADD COLUMN IF NOT EXISTS delete_flag CHAR(1) NOT NULL DEFAULT 'N';
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'fdc_archive_object_t' AND column_name = 'deleted'
+        ) THEN
+            UPDATE fdc_archive_object_t SET delete_flag = CASE WHEN deleted IS NOT NULL AND deleted <> 0 THEN 'Y' ELSE 'N' END;
+            ALTER TABLE fdc_archive_object_t DROP COLUMN deleted;
+        END IF;
+    END IF;
 
-ALTER TABLE fdc_warehouse_location_t ADD COLUMN IF NOT EXISTS delete_flag CHAR(1) NOT NULL DEFAULT 'N';
-UPDATE fdc_warehouse_location_t SET delete_flag = CASE WHEN deleted IS NOT NULL AND deleted <> 0 THEN 'Y' ELSE 'N' END;
-ALTER TABLE fdc_warehouse_location_t DROP COLUMN IF EXISTS deleted;
+    IF to_regclass('public.fdc_warehouse_location_t') IS NOT NULL THEN
+        ALTER TABLE fdc_warehouse_location_t ADD COLUMN IF NOT EXISTS delete_flag CHAR(1) NOT NULL DEFAULT 'N';
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'fdc_warehouse_location_t' AND column_name = 'deleted'
+        ) THEN
+            UPDATE fdc_warehouse_location_t SET delete_flag = CASE WHEN deleted IS NOT NULL AND deleted <> 0 THEN 'Y' ELSE 'N' END;
+            ALTER TABLE fdc_warehouse_location_t DROP COLUMN deleted;
+        END IF;
+    END IF;
+END $$;
 
 -- ========== 5) warehouse_location: time column names ==========
-ALTER TABLE fdc_warehouse_location_t RENAME COLUMN updated_at TO last_update_date;
+DO $$
+BEGIN
+    IF to_regclass('public.fdc_warehouse_location_t') IS NOT NULL
+       AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'fdc_warehouse_location_t' AND column_name = 'updated_at'
+       )
+    THEN
+        EXECUTE 'ALTER TABLE fdc_warehouse_location_t RENAME COLUMN updated_at TO last_update_date';
+    END IF;
+END $$;
 
 -- ========== 6) utilization_rate precision ==========
 ALTER TABLE fdc_warehouse_location_t

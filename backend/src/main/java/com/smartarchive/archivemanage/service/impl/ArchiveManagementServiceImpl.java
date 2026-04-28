@@ -204,6 +204,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         Map.entry("lgNo", "attr60")
     );
     private static final List<String> REF_NO_ATTR_COLUMNS = List.of("attr42", "attr43", "attr44", "attr45", "attr46");
+    private static final Set<String> EXT_PERSON_FIELDS = Set.of("verifiedBy", "assembledBy", "storedBy", "accountant", "scannedBy");
 
     /**
      * {@code fdc_document_t.attr2–attr100}（attr1 单独表示是否可见）；
@@ -546,7 +547,8 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         archive.setEndPeriod(command.getEndPeriod().trim());
         archive.setBusinessCode(trimToNull(command.getBusinessCode()));
         archive.setDocumentName(command.getDocumentName().trim());
-        archive.setDutyPerson(command.getDutyPerson().trim());
+        Long dutyPersonId = resolveDutyPersonUserId(command.getDutyPersonId(), command.getDutyPerson());
+        archive.setDutyPerson(String.valueOf(dutyPersonId));
         archive.setDutyDepartment(command.getDutyDepartment().trim());
         archive.setDocumentDate(command.getDocumentDate() == null ? null : command.getDocumentDate().atStartOfDay());
         archive.setSecurityLevelCode(securityLevelResolver.requireCanonicalForWrite(command.getSecurityLevelCode()));
@@ -612,10 +614,18 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         StringBuilder sql = new StringBuilder("""
             select doc_id, doc_biz_no, company_code, company_name, biz_module_code, start_period, end_period,
                    arch_place_alpha2_code, origin_place_alpha2_code, doc_organization_code, lifecycle_status,
-                   doc_name, doc_gen_date, doc_resp_person_id, coalesce(u.user_name, cast(fdc_document_t.doc_resp_person_id as varchar)) as duty_person_name, doc_resp_dept_id, carrier_type,
+                   doc_name, doc_gen_date, doc_resp_person_id,
+                   coalesce(
+                     nullif(trim(concat_ws(' ', nullif(u.user_name, ''), nullif(u.employee_no, ''))), ''),
+                     cast(fdc_document_t.doc_resp_person_id as varchar)
+                   ) as duty_person_name,
+                   doc_resp_dept_id, carrier_type,
                    attr1,
                    source_system, security_level, description, fdc_document_t.creation_date as creation_date,
-                   coalesce(created_u.user_name, cast(fdc_document_t.created_by as varchar)) as created_by_name,
+                   coalesce(
+                     nullif(trim(concat_ws(' ', nullif(created_u.user_name, ''), nullif(created_u.employee_no, ''))), ''),
+                     cast(fdc_document_t.created_by as varchar)
+                   ) as created_by_name,
               """).append(SQL_SELECT_FDC_DOC_ATTR2_TO_100).append("""
                    ,
                    cp.company_tag, cp.country_code, geo.rep_office_name, geo.region_name
@@ -660,6 +670,14 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         if (StringUtils.hasText(command.getCompanyProjectCode())) {
             sql.append(" and company_code = ?");
             params.add(command.getCompanyProjectCode().trim());
+        }
+        if (StringUtils.hasText(command.getDocumentTypeCode()) && StringUtils.hasText(command.getArchiveTypeCode())) {
+            String docTypeCode = command.getDocumentTypeCode().trim();
+            String archiveTypeCode = command.getArchiveTypeCode().trim();
+            String resolvedRoot = resolveRootBusinessModuleCode(archiveTypeCode, businessModuleMap);
+            if (!docTypeCode.equals(resolvedRoot)) {
+                throw new BusinessException("archiveTypeCode must belong to the selected documentTypeCode");
+            }
         }
         if (StringUtils.hasText(command.getArchiveTypeCode())) {
             sql.append(" and biz_module_code = ?");
@@ -709,8 +727,19 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
             sql.append(")");
         }
         if (StringUtils.hasText(command.getDutyPerson())) {
-            sql.append(" and cast(doc_resp_person_id as varchar) ilike ?");
-            params.add("%" + command.getDutyPerson().trim() + "%");
+            sql.append("""
+                 and (
+                       cast(doc_resp_person_id as varchar) ilike ?
+                    or coalesce(u.user_name, '') ilike ?
+                    or coalesce(u.employee_no, '') ilike ?
+                    or concat_ws(' ', coalesce(u.user_name, ''), coalesce(u.employee_no, '')) ilike ?
+                 )
+                """);
+            String dutyKeyword = "%" + command.getDutyPerson().trim() + "%";
+            params.add(dutyKeyword);
+            params.add(dutyKeyword);
+            params.add(dutyKeyword);
+            params.add(dutyKeyword);
         }
         if (StringUtils.hasText(command.getArchiveDestination())) {
             sql.append(" and arch_place_alpha2_code = ?");
@@ -729,6 +758,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         sql.append(" order by doc_id desc");
 
         Map<String, List<BusinessModuleExtField>> basicExtFieldsByModule = new HashMap<>();
+        Map<String, String> userDisplayById = loadUserDisplayByIdSnapshot();
         List<ArchiveSummaryResponse> rows = jdbcTemplate.query(sql.toString(), (rs, rowNum) -> {
             LocalDate startPeriod = rs.getObject("start_period", LocalDate.class);
             LocalDate endPeriod = rs.getObject("end_period", LocalDate.class);
@@ -767,7 +797,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
                 .custodyStatus("ARCHIVED".equalsIgnoreCase(lifecycleStatus) ? "已归档" : ("DRAFT".equalsIgnoreCase(lifecycleStatus) ? "草稿" : "未归档"))
                 .lastUpdateDate(creationDate)
                 .attachmentCount(0)
-                .extValues(extractHardCodedExtValues(rs, businessModuleCode, basicExtFieldsByModule))
+                .extValues(extractHardCodedExtValues(rs, businessModuleCode, basicExtFieldsByModule, userDisplayById))
                 .attachments(List.of())
                 .build();
         }, params.toArray());
@@ -828,7 +858,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         Map<String, String> extFilters = command.getExtFilters();
         if (extFilters != null && !extFilters.isEmpty()) {
             rows = rows.stream()
-                .filter(item -> matchesExtFilters(item.getExtValues() == null ? Map.of() : item.getExtValues(), extFilters))
+                .filter(item -> matchesExtFilters(item.getExtValues() == null ? Map.of() : item.getExtValues(), extFilters, userDisplayById))
                 .toList();
         }
 
@@ -1090,7 +1120,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
             } else {
                 docGenDate = parseDocumentDateTime(requireText(command.getDocumentDate(), "documentDate"));
             }
-            Long userId = resolveUserIdByLoginName(command.getDutyPerson());
+            Long userId = resolveDutyPersonUserId(command.getDutyPersonId(), command.getDutyPerson());
             long deptId = parseDeptId(command.getDutyDepartment());
             Map<String, String> ext = command.getExtValues() == null ? Map.of() : command.getExtValues();
             String visibility = StringUtils.hasText(ext.get("visibility")) ? ext.get("visibility").trim() : "是";
@@ -1796,23 +1826,31 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         String inSql = docIds.stream().map(String::valueOf).collect(Collectors.joining(","));
         Map<String, BusinessModule> businessModuleMap = listBusinessModuleMap();
         Map<String, String> carrierTypeNameMap = listCarrierTypeNameMap();
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+        List<ExportRow> exportRows = new ArrayList<>();
+        jdbcTemplate.query(
             """
             select d.doc_id, d.doc_biz_no, d.doc_name, d.biz_module_code, d.company_name, d.company_code,
                    to_char(start_period,'YYYY-MM') as start_period,
                    to_char(end_period,'YYYY-MM') as end_period,
                    d.arch_place_alpha2_code, d.origin_place_alpha2_code, d.doc_organization_code,
                    d.doc_resp_dept_id, d.carrier_type, d.source_system, d.security_level, d.lifecycle_status,
-                   d.custody_status, d.description, d.attr1, d.arch_barcode,
-                   d.attr41, d.attr42, d.attr43, d.attr44, d.attr45, d.attr46, d.attr47, d.attr48, d.attr49, d.attr50,
-                   d.attr51, d.attr52, d.attr53, d.attr54, d.attr55, d.attr56, d.attr57, d.attr58, d.attr59, d.attr60,
+                   d.custody_status, d.description, d.attr1, d.arch_barcode, d.arch_barcode as archive_barcode,
                    d.copies_qty, d.remaining_copies_qty,
-                   coalesce(u.user_name, cast(d.doc_resp_person_id as varchar)) as duty_person_name,
-                   coalesce(cu.user_name, cast(d.created_by as varchar)) as created_by_name,
+                   coalesce(
+                     nullif(trim(concat_ws(' ', nullif(u.user_name, ''), nullif(u.employee_no, ''))), ''),
+                     cast(d.doc_resp_person_id as varchar)
+                   ) as duty_person_name,
+                   coalesce(
+                     nullif(trim(concat_ws(' ', nullif(cu.user_name, ''), nullif(cu.employee_no, ''))), ''),
+                     cast(d.created_by as varchar)
+                   ) as created_by_name,
                    cp.country_code, geo.rep_office_name, geo.region_name, cp.company_tag,
                    to_char(doc_gen_date, 'YYYY-MM-DD HH24:MI:SS') as doc_gen_date,
                    to_char(d.creation_date, 'YYYY-MM-DD HH24:MI:SS') as creation_date,
-                   to_char(d.last_update_date, 'YYYY-MM-DD HH24:MI:SS') as last_update_date
+                   to_char(d.last_update_date, 'YYYY-MM-DD HH24:MI:SS') as last_update_date,
+                   """
+                + SQL_SELECT_D_FDC_DOC_ATTR2_TO_100
+                + """
               from fdc_document_t d
               left join tpl_user_t u on u.user_id = d.doc_resp_person_id
               left join tpl_user_t cu on cu.user_id = d.created_by
@@ -1825,112 +1863,149 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
                      where delete_flag = 'N'
                      group by country_code
               ) geo on geo.country_code = cp.country_code
-             where coalesce(d.delete_flag,0) = 0 and d.doc_id in (""" + inSql + ") order by d.doc_id desc"
+             where coalesce(d.delete_flag,0) = 0 and d.doc_id in (""" + inSql + ") order by d.doc_id desc",
+            rs -> {
+                while (rs.next()) {
+                    String bizModuleCode = trimToNull(rs.getString("biz_module_code"));
+                    Map<String, String> attrValues = new LinkedHashMap<>();
+                    for (String col : FDC_DOC_ATTR_EXTENDED_COLUMNS) {
+                        attrValues.put(col, trimToNull(rs.getString(col)));
+                    }
+                    exportRows.add(new ExportRow(
+                        rs.getLong("doc_id"),
+                        bizModuleCode,
+                        false,
+                        rs.getString("doc_biz_no"),
+                        rs.getString("company_name"),
+                        rs.getString("start_period"),
+                        rs.getString("end_period"),
+                        rs.getString("arch_place_alpha2_code"),
+                        rs.getString("origin_place_alpha2_code"),
+                        rs.getString("doc_name"),
+                        rs.getString("doc_gen_date"),
+                        rs.getString("duty_person_name"),
+                        rs.getString("doc_resp_dept_id"),
+                        carrierTypeNameMap.getOrDefault(Objects.toString(rs.getString("carrier_type"), ""), Objects.toString(rs.getString("carrier_type"), "")),
+                        rs.getString("source_system"),
+                        securityLevelResolver.resolve(Objects.toString(rs.getString("security_level"), "")).displayName(),
+                        "ARCHIVED".equalsIgnoreCase(Objects.toString(rs.getString("lifecycle_status"), "")) ? "已归档" : ("DRAFT".equalsIgnoreCase(Objects.toString(rs.getString("lifecycle_status"), "")) ? "草稿" : "未归档"),
+                        rs.getString("creation_date"),
+                        rs.getString("created_by_name"),
+                        rs.getString("description"),
+                        rs.getString("country_code"),
+                        rs.getString("rep_office_name"),
+                        rs.getString("region_name"),
+                        rs.getString("company_tag"),
+                        rs.getString("doc_organization_code"),
+                        StringUtils.hasText(Objects.toString(rs.getString("attr1"), "")) ? rs.getString("attr1") : "是",
+                        rs.getString("arch_barcode"),
+                        rs.getString("archive_barcode"),
+                        rs.getString("custody_status"),
+                        rs.getString("copies_qty"),
+                        rs.getString("remaining_copies_qty"),
+                        rs.getString("last_update_date"),
+                        attrValues
+                    ));
+                }
+                return null;
+            }
         );
-        List<String> lines = new ArrayList<>();
-        if (pendingArchiveScope) {
-            lines.add(
-                "文档ID,文档类型,文档业务编码,公司,业务模块,开始档期,结束档期,归档地,产生地,文档名称,文档生成日期,归档责任人,文档责任部门,载体类型,系统来源,密级,文档生命周期状态,创建时间,创建人,描述,"
-                    + "国家,代表处,地区部,公司标签,发票号,其他相关编号1,其他相关编号2,其他相关编号3,其他相关编号4,其他相关编号5,会计,扫描员,开立日期,到期日,保函失效日期,保函台账状态,银行名称,币种,金额,签发机构,报废时间,业务册号,保函电子流编号,保函编号,"
-                    + "文档组织,是否可见,条码模块,保管状态,最后修改时间"
-            );
-        } else {
-            lines.add(
-                "文档类型,文档业务编码,公司,业务模块,开始档期,结束档期,归档地,产生地,文档名称,文档生成日期,归档责任人,文档责任部门,载体类型,系统来源,密级,文档生命周期状态,创建时间,创建人,描述,"
-                    + "国家,代表处,地区部,公司标签,发票号,其他相关编号1,其他相关编号2,其他相关编号3,其他相关编号4,其他相关编号5,会计,扫描员,开立日期,到期日,保函失效日期,保函台账状态,银行名称,币种,金额,签发机构,报废时间,业务册号,保函电子流编号,保函编号,"
-                    + "文档组织,是否可见,条码模块,档案条码,文档编号,册号,册条码,保管状态,库房,库位,份数,剩余份数,最后修改时间"
-            );
-        }
-        for (Map<String, Object> row : rows) {
-            String bizModuleCode = Objects.toString(row.get("biz_module_code"), "");
-            String documentTypeCode = resolveRootBusinessModuleCode(bizModuleCode, businessModuleMap);
-            String documentTypeName = resolveRootBusinessModuleName(bizModuleCode, businessModuleMap);
-            SecurityLevelResolver.Resolved secLv = securityLevelResolver.resolve(Objects.toString(row.get("security_level"), ""));
-            String lifecycleStatus = Objects.toString(row.get("lifecycle_status"), "");
-            List<Object> exportValues = new ArrayList<>(Stream.of(
-                StringUtils.hasText(documentTypeName) ? documentTypeName : documentTypeCode,
-                row.get("doc_biz_no"),
-                row.get("company_name"),
-                resolveBusinessModuleDisplayName(bizModuleCode, businessModuleMap),
-                row.get("start_period"),
-                row.get("end_period"),
-                row.get("arch_place_alpha2_code"),
-                row.get("origin_place_alpha2_code"),
-                row.get("doc_name"),
-                row.get("doc_gen_date"),
-                row.get("duty_person_name"),
-                row.get("doc_resp_dept_id"),
-                carrierTypeNameMap.getOrDefault(Objects.toString(row.get("carrier_type"), ""), Objects.toString(row.get("carrier_type"), "")),
-                row.get("source_system"),
-                secLv.displayName(),
-                "ARCHIVED".equalsIgnoreCase(lifecycleStatus) ? "已归档" : ("DRAFT".equalsIgnoreCase(lifecycleStatus) ? "草稿" : "未归档"),
-                row.get("creation_date"),
-                row.get("created_by_name"),
-                row.get("description"),
-                row.get("country_code"),
-                row.get("rep_office_name"),
-                row.get("region_name"),
-                row.get("company_tag"),
-                row.get("attr41"),
-                row.get("attr42"),
-                row.get("attr43"),
-                row.get("attr44"),
-                row.get("attr45"),
-                row.get("attr46"),
-                row.get("attr47"),
-                row.get("attr48"),
-                row.get("attr49"),
-                row.get("attr50"),
-                row.get("attr51"),
-                row.get("attr52"),
-                row.get("attr53"),
-                row.get("attr54"),
-                row.get("attr55"),
-                row.get("attr56"),
-                row.get("attr57"),
-                row.get("attr58"),
-                row.get("attr59"),
-                row.get("attr60"),
-                row.get("doc_organization_code"),
-                StringUtils.hasText(Objects.toString(row.get("attr1"), "")) ? row.get("attr1") : "是",
-                row.get("arch_barcode")
-            ).toList());
-            if (pendingArchiveScope) {
-                exportValues.add(0, row.get("doc_id"));
-            }
-            if (!pendingArchiveScope) {
-                exportValues.add(""); // 档案条码
-                exportValues.add(""); // 文档编号
-                exportValues.add(""); // 册号
-                exportValues.add(""); // 册条码
-            }
-            exportValues.add(row.get("custody_status")); // 保管状态
-            if (!pendingArchiveScope) {
-                exportValues.add(""); // 库房
-                exportValues.add(""); // 库位
-                exportValues.add(row.get("copies_qty")); // 份数
-                exportValues.add(row.get("remaining_copies_qty")); // 剩余份数
-            }
-            exportValues.add(row.get("last_update_date"));
-            lines.add(exportValues.stream().map(v -> csvEscape(Objects.toString(v, ""))).collect(Collectors.joining(",")));
-        }
-        Set<Long> exportedDocIds = rows.stream()
-            .map(r -> ((Number) r.get("doc_id")).longValue())
+
+        Set<Long> exportedDocIds = exportRows.stream()
+            .map(ExportRow::docId)
             .collect(Collectors.toCollection(HashSet::new));
         List<Long> remaining = docIds.stream()
             .filter(id -> id != null && id > 0 && !exportedDocIds.contains(id))
             .sorted(Comparator.reverseOrder())
             .toList();
         for (Long draftId : remaining) {
-            String draftLine = buildPendingExportCsvLineForDraft(
-                draftId,
-                pendingArchiveScope,
-                businessModuleMap,
-                carrierTypeNameMap
-            );
-            if (draftLine != null) {
-                lines.add(draftLine);
+            ExportRow draftRow = buildPendingExportDraftRow(draftId, businessModuleMap, carrierTypeNameMap);
+            if (draftRow != null) {
+                exportRows.add(draftRow);
             }
+        }
+
+        List<DynamicExtExportColumn> dynamicExtColumns = buildDynamicExtExportColumns(exportRows, businessModuleMap);
+
+        List<String> headers = new ArrayList<>();
+        if (pendingArchiveScope) {
+            headers.add("文档ID");
+        }
+        headers.addAll(List.of(
+            "文档类型", "文档业务编码", "公司", "业务模块", "开始档期", "结束档期", "归档地", "产生地", "文档名称",
+            "文档生成日期", "归档责任人", "文档责任部门", "载体类型", "系统来源", "密级", "文档生命周期状态", "创建时间", "创建人", "描述",
+            "国家", "代表处", "地区部", "公司标签"
+        ));
+        headers.addAll(dynamicExtColumns.stream().map(DynamicExtExportColumn::header).toList());
+        if (pendingArchiveScope) {
+            headers.addAll(List.of("文档组织", "是否可见", "条码模块", "保管状态", "最后修改时间"));
+        } else {
+            headers.addAll(List.of("文档组织", "是否可见", "条码模块", "档案条码", "文档编号", "册号", "册条码", "保管状态", "库房", "库位", "份数", "剩余份数", "最后修改时间"));
+        }
+
+        List<String> lines = new ArrayList<>();
+        lines.add(headers.stream().map(this::csvEscape).collect(Collectors.joining(",")));
+        for (ExportRow row : exportRows) {
+            String documentTypeCode = resolveRootBusinessModuleCode(row.moduleCode(), businessModuleMap);
+            String documentTypeName = resolveRootBusinessModuleName(row.moduleCode(), businessModuleMap);
+            List<Object> exportValues = new ArrayList<>();
+            if (pendingArchiveScope) {
+                exportValues.add(row.docId());
+            }
+            exportValues.addAll(List.of(
+                StringUtils.hasText(documentTypeName) ? documentTypeName : documentTypeCode,
+                row.businessCode(),
+                row.companyName(),
+                resolveBusinessModuleDisplayName(row.moduleCode(), businessModuleMap),
+                row.beginPeriod(),
+                row.endPeriod(),
+                row.archiveDestination(),
+                row.originPlace(),
+                row.documentName(),
+                row.documentDate(),
+                row.dutyPerson(),
+                row.dutyDepartment(),
+                row.carrierType(),
+                row.sourceSystem(),
+                row.securityLevelName(),
+                row.lifecycleStatusDisplay(),
+                row.creationDate(),
+                row.createdByName(),
+                row.description(),
+                row.countryCode(),
+                row.repOfficeName(),
+                row.regionName(),
+                row.companyTag()
+            ));
+            for (DynamicExtExportColumn col : dynamicExtColumns) {
+                exportValues.add(resolveDynamicExtColumnValue(row, col));
+            }
+            if (pendingArchiveScope) {
+                exportValues.addAll(List.of(
+                    row.docOrganizationCode(),
+                    row.visibility(),
+                    row.barcodeModule(),
+                    row.custodyStatus(),
+                    row.lastUpdateDate()
+                ));
+            } else {
+                exportValues.addAll(List.of(
+                    row.docOrganizationCode(),
+                    row.visibility(),
+                    row.barcodeModule(),
+                    row.archiveBarcode(),
+                    "",
+                    "",
+                    "",
+                    row.custodyStatus(),
+                    "",
+                    "",
+                    row.copies(),
+                    row.remainingCopies(),
+                    row.lastUpdateDate()
+                ));
+            }
+            lines.add(exportValues.stream().map(v -> csvEscape(Objects.toString(v, ""))).collect(Collectors.joining(",")));
         }
         return String.join("\n", lines);
     }
@@ -1938,9 +2013,8 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
     /**
      * 应归档草稿仅存于 {@code fdc_pending_document_draft_t}，批量导出时需从 payload_json 补行。
      */
-    private String buildPendingExportCsvLineForDraft(
+    private ExportRow buildPendingExportDraftRow(
         long draftId,
-        boolean pendingArchiveScope,
         Map<String, BusinessModule> documentTypeMap,
         Map<String, String> carrierTypeNameMap
     ) {
@@ -1988,11 +2062,12 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
             visibility = Objects.toString(cmd.getExtValues().get("visibility"), "");
             barcodeModule = Objects.toString(cmd.getExtValues().get("barcodeModule"), "");
         }
-        List<Object> exportValues = new ArrayList<>(Stream.of(
-            StringUtils.hasText(documentTypeName) ? documentTypeName : documentTypeCode,
-            cmd.getBusinessCode(),
+        return new ExportRow(
+            draftId,
+            bizModule,
+            true,
+            Objects.toString(cmd.getBusinessCode(), ""),
             companyName,
-            resolveBusinessModuleDisplayName(bizModule, documentTypeMap),
             Objects.toString(cmd.getBeginPeriod(), ""),
             Objects.toString(cmd.getEndPeriod(), ""),
             Objects.toString(cmd.getArchiveDestination(), ""),
@@ -2008,55 +2083,159 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
             meta.creationDate(),
             resolveTplUserDisplayName(meta.createdBy()),
             Objects.toString(cmd.getRemark(), ""),
-            geoRow.get("country_code"),
-            geoRow.get("rep_office_name"),
-            geoRow.get("region_name"),
-            geoRow.get("company_tag"),
-            attrCols.get("attr41"),
-            attrCols.get("attr42"),
-            attrCols.get("attr43"),
-            attrCols.get("attr44"),
-            attrCols.get("attr45"),
-            attrCols.get("attr46"),
-            attrCols.get("attr47"),
-            attrCols.get("attr48"),
-            attrCols.get("attr49"),
-            attrCols.get("attr50"),
-            attrCols.get("attr51"),
-            attrCols.get("attr52"),
-            attrCols.get("attr53"),
-            attrCols.get("attr54"),
-            attrCols.get("attr55"),
-            attrCols.get("attr56"),
-            attrCols.get("attr57"),
-            attrCols.get("attr58"),
-            attrCols.get("attr59"),
-            attrCols.get("attr60"),
+            Objects.toString(geoRow.get("country_code"), ""),
+            Objects.toString(geoRow.get("rep_office_name"), ""),
+            Objects.toString(geoRow.get("region_name"), ""),
+            Objects.toString(geoRow.get("company_tag"), ""),
             Objects.toString(cmd.getDocumentOrganizationCode(), ""),
             StringUtils.hasText(visibility) ? visibility : "是",
-            barcodeModule
-        ).toList());
-        if (pendingArchiveScope) {
-            exportValues.add(0, draftId);
-        }
-        if (!pendingArchiveScope) {
-            exportValues.add(""); // 档案条码
-            exportValues.add(""); // 文档编号
-            exportValues.add(""); // 册号
-            exportValues.add(""); // 册条码
-        }
-        exportValues.add(Objects.toString(cmd.getCustodyStatus(), ""));
-        if (!pendingArchiveScope) {
-            exportValues.add(""); // 库房
-            exportValues.add(""); // 库位
-            exportValues.add(""); // 份数
-            exportValues.add(""); // 剩余份数
-        }
-        exportValues.add(meta.lastUpdateDate());
-        return exportValues.stream().map(v -> csvEscape(Objects.toString(v, ""))).collect(Collectors.joining(","));
+            barcodeModule,
+            "",
+            Objects.toString(cmd.getCustodyStatus(), ""),
+            "",
+            "",
+            meta.lastUpdateDate(),
+            attrCols
+        );
     }
 
     private record DraftExportMeta(String payloadJson, long createdBy, String creationDate, String lastUpdateDate) {}
+
+    private List<DynamicExtExportColumn> buildDynamicExtExportColumns(List<ExportRow> rows, Map<String, BusinessModule> businessModuleMap) {
+        LinkedHashSet<String> moduleCodes = rows.stream()
+            .map(ExportRow::moduleCode)
+            .filter(StringUtils::hasText)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, Map<String, BusinessModuleExtField>> defsByCanonical = new LinkedHashMap<>();
+        for (String moduleCode : moduleCodes) {
+            for (BusinessModuleExtField f : loadBasicExtFieldsForModule(moduleCode)) {
+                if (f == null || !StringUtils.hasText(f.getExtAttribute())) {
+                    continue;
+                }
+                String col = f.getExtAttribute().trim().toLowerCase(Locale.ROOT);
+                if (!FDC_DOC_EXT_ATTRIBUTE_WHITELIST.contains(col)) {
+                    continue;
+                }
+                String canonicalKey = trimToNull(f.getEnglishFieldName());
+                if (!StringUtils.hasText(canonicalKey)) {
+                    canonicalKey = trimToNull(f.getFieldCode());
+                }
+                if (!StringUtils.hasText(canonicalKey)) {
+                    canonicalKey = col;
+                }
+                defsByCanonical
+                    .computeIfAbsent(canonicalKey, k -> new LinkedHashMap<>())
+                    .put(moduleCode, f);
+            }
+        }
+        List<DynamicExtExportColumn> result = new ArrayList<>();
+        for (Map.Entry<String, Map<String, BusinessModuleExtField>> entry : defsByCanonical.entrySet()) {
+            Map<String, BusinessModuleExtField> byModule = entry.getValue();
+            Set<String> meanings = byModule.values().stream()
+                .map(v -> trimToNull(v.getFieldName()))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+            if (meanings.size() > 1) {
+                for (Map.Entry<String, BusinessModuleExtField> byModuleEntry : byModule.entrySet()) {
+                    String moduleCode = byModuleEntry.getKey();
+                    BusinessModuleExtField field = byModuleEntry.getValue();
+                    String moduleName = resolveBusinessModuleDisplayName(moduleCode, businessModuleMap);
+                    String header = Objects.toString(trimToNull(field.getFieldName()), entry.getKey()) + "（" + moduleName + "）";
+                    result.add(new DynamicExtExportColumn(header, entry.getKey(), moduleCode, true, byModule));
+                }
+                continue;
+            }
+            String header = byModule.values().stream()
+                .map(BusinessModuleExtField::getFieldName)
+                .map(this::trimToNull)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(entry.getKey());
+            result.add(new DynamicExtExportColumn(header, entry.getKey(), null, false, byModule));
+        }
+        return result;
+    }
+
+    private String resolveDynamicExtColumnValue(ExportRow row, DynamicExtExportColumn column) {
+        if (column.moduleSpecific() && !Objects.equals(trimToNull(row.moduleCode()), trimToNull(column.moduleCode()))) {
+            return "";
+        }
+        BusinessModuleExtField field = column.moduleSpecific()
+            ? column.fieldByModule().get(column.moduleCode())
+            : column.fieldByModule().get(trimToNull(row.moduleCode()));
+        if (field == null || !StringUtils.hasText(field.getExtAttribute())) {
+            return "";
+        }
+        String attr = field.getExtAttribute().trim().toLowerCase(Locale.ROOT);
+        String value = row.attrValues().get(attr);
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        if ("DATE".equalsIgnoreCase(field.getDataType()) || "DATETIME".equalsIgnoreCase(field.getDataType())) {
+            return normalizeDateLikeText(value);
+        }
+        return value;
+    }
+
+    private String normalizeDateLikeText(String raw) {
+        String value = trimToNull(raw);
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        try {
+            return LocalDateTime.parse(value.replace(" ", "T")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        } catch (Exception ignored) {
+            try {
+                return LocalDate.parse(value).toString();
+            } catch (Exception ignored2) {
+                return value;
+            }
+        }
+    }
+
+    private record DynamicExtExportColumn(
+        String header,
+        String canonicalKey,
+        String moduleCode,
+        boolean moduleSpecific,
+        Map<String, BusinessModuleExtField> fieldByModule
+    ) {}
+
+    private record ExportRow(
+        long docId,
+        String moduleCode,
+        boolean draft,
+        String businessCode,
+        String companyName,
+        String beginPeriod,
+        String endPeriod,
+        String archiveDestination,
+        String originPlace,
+        String documentName,
+        String documentDate,
+        String dutyPerson,
+        String dutyDepartment,
+        String carrierType,
+        String sourceSystem,
+        String securityLevelName,
+        String lifecycleStatusDisplay,
+        String creationDate,
+        String createdByName,
+        String description,
+        String countryCode,
+        String repOfficeName,
+        String regionName,
+        String companyTag,
+        String docOrganizationCode,
+        String visibility,
+        String barcodeModule,
+        String archiveBarcode,
+        String custodyStatus,
+        String copies,
+        String remainingCopies,
+        String lastUpdateDate,
+        Map<String, String> attrValues
+    ) {}
 
     private String resolveCompanyProjectNameForExport(String companyProjectCode) {
         if (!StringUtils.hasText(companyProjectCode)) {
@@ -2115,7 +2294,15 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
             return "";
         }
         List<String> names = jdbcTemplate.queryForList(
-            "select user_name from tpl_user_t where user_id = ? and delete_flag = 'N' limit 1",
+            """
+            select coalesce(
+                     nullif(trim(concat_ws(' ', nullif(user_name, ''), nullif(employee_no, ''))), ''),
+                     cast(user_id as varchar)
+                   )
+              from tpl_user_t
+             where user_id = ? and delete_flag = 'N'
+             limit 1
+            """,
             String.class,
             userId
         );
@@ -2416,49 +2603,73 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         return YearMonth.parse(ym.trim()).atEndOfMonth();
     }
 
-    private Long resolveUserIdByLoginName(String dutyPersonName) {
-        if (!StringUtils.hasText(dutyPersonName)) {
+    private Long resolveDutyPersonUserId(Long dutyPersonId, String dutyPersonText) {
+        if (dutyPersonId != null && dutyPersonId > 0) {
+            Integer exists = jdbcTemplate.queryForObject(
+                "select count(*) from tpl_user_t where user_id = ? and delete_flag = 'N'",
+                Integer.class,
+                dutyPersonId
+            );
+            if (exists != null && exists > 0) {
+                return dutyPersonId;
+            }
+            throw new BusinessException("dutyPersonId does not exist");
+        }
+        if (!StringUtils.hasText(dutyPersonText)) {
             return SYSTEM_OPERATOR_ID;
         }
-        String name = dutyPersonName.trim();
-        if (name.matches("^\\d+$")) {
-            try {
-                Long id = Long.parseLong(name);
-                Integer exists = jdbcTemplate.queryForObject(
-                    "select count(*) from tpl_user_t where user_id = ? and delete_flag = 'N'",
-                    Integer.class,
-                    id
-                );
-                if (exists != null && exists > 0) {
-                    return id;
-                }
-            } catch (NumberFormatException ignored) {
-                // fall through
+        String keyword = normalizeLegacyUserDisplayInput(dutyPersonText);
+        if (keyword.matches("^\\d+$")) {
+            List<Long> ids = jdbcTemplate.queryForList(
+                "select user_id from tpl_user_t where delete_flag = 'N' and user_id = ? limit 1",
+                Long.class,
+                Long.parseLong(keyword)
+            );
+            if (!ids.isEmpty()) {
+                return ids.get(0);
             }
         }
-        List<Long> ids = jdbcTemplate.queryForList(
-            "select user_id from tpl_user_t where delete_flag = 'N' and user_name = ? limit 1",
-            Long.class,
-            name
-        );
-        if (!ids.isEmpty()) {
-            return ids.get(0);
+        String employeeNo = keyword;
+        if (keyword.contains(" ")) {
+            String[] parts = keyword.split("\\s+", 2);
+            if (parts.length == 2 && StringUtils.hasText(parts[1])) {
+                employeeNo = parts[1].trim();
+            }
         }
-        // 输入了新责任人姓名时自动补齐用户，避免回退到系统用户导致“修改不生效”。
-        Number nextId = jdbcTemplate.queryForObject("select coalesce(max(user_id),0) + 1 from tpl_user_t", Number.class);
-        long newId = nextId == null ? 1L : nextId.longValue();
-        jdbcTemplate.update(
-            """
-            insert into tpl_user_t (
-              user_id, user_name, status, created_by, creation_date, last_updated_by, last_update_date, delete_flag
-            ) values (?, ?, 'ACTIVE', ?, current_timestamp, ?, current_timestamp, 'N')
-            """,
-            newId,
-            name,
-            SYSTEM_OPERATOR_ID,
-            SYSTEM_OPERATOR_ID
+        if (employeeNo.matches("^[0-9]{8}$")) {
+            List<Long> ids = jdbcTemplate.queryForList(
+                "select user_id from tpl_user_t where delete_flag = 'N' and employee_no = ? limit 1",
+                Long.class,
+                employeeNo
+            );
+            if (!ids.isEmpty()) {
+                return ids.get(0);
+            }
+        }
+        List<Long> exactNameIds = jdbcTemplate.queryForList(
+            "select user_id from tpl_user_t where delete_flag = 'N' and user_name = ? order by user_id limit 1",
+            Long.class,
+            keyword
         );
-        return newId;
+        if (!exactNameIds.isEmpty()) {
+            return exactNameIds.get(0);
+        }
+        List<Long> displayIds = jdbcTemplate.queryForList(
+            """
+            select user_id
+              from tpl_user_t
+             where delete_flag = 'N'
+               and trim(concat_ws(' ', coalesce(user_name, ''), coalesce(employee_no, ''))) = ?
+             order by user_id
+             limit 1
+            """,
+            Long.class,
+            keyword
+        );
+        if (!displayIds.isEmpty()) {
+            return displayIds.get(0);
+        }
+        throw new BusinessException("dutyPerson must match existing tpl_user_t record (user_name employee_no), legacy 'user_name + employee_no' is also accepted");
     }
 
     private long parseDeptId(String dutyDepartment) {
@@ -2612,7 +2823,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         Map<String, String> ext = c.getExtValues() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(c.getExtValues());
         String visibility = ext.getOrDefault("visibility", "是");
         SecurityLevelResolver.Resolved sec = securityLevelResolver.resolve(trimToNull(c.getSecurityLevelCode()));
-        String dutyName = StringUtils.hasText(c.getDutyPerson()) ? c.getDutyPerson().trim() : "";
+        String dutyName = resolveUserNameByIdText(c.getDutyPerson());
         String createdByLabel = resolveUserNameByIdText(String.valueOf(createdById));
         String beginYm = trimToNull(c.getBeginPeriod());
         String endYm = trimToNull(c.getEndPeriod());
@@ -2691,6 +2902,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         m.setDocumentName(firstNonBlankField(in.getDocumentName(), base.getDocumentName()));
         m.setDocumentDate(firstNonBlankField(in.getDocumentDate(), base.getDocumentDate()));
         m.setDutyPerson(firstNonBlankField(in.getDutyPerson(), base.getDutyPerson()));
+        m.setDutyPersonId(in.getDutyPersonId() != null && in.getDutyPersonId() > 0 ? in.getDutyPersonId() : base.getDutyPersonId());
         m.setDutyDepartment(firstNonBlankField(in.getDutyDepartment(), base.getDutyDepartment()));
         m.setCarrierTypeCode(firstNonBlankField(in.getCarrierTypeCode(), base.getCarrierTypeCode()));
         m.setSourceSystem(firstNonBlankField(in.getSourceSystem(), base.getSourceSystem()));
@@ -2870,7 +3082,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
                 : startPeriod;
             long newDocId = nextFdcDocumentId();
             String bizNo = resolvePendingDocBizNo(requireText(command.getBusinessCode(), "businessCode").trim(), newDocId);
-            Long userId = resolveUserIdByLoginName(command.getDutyPerson());
+            Long userId = resolveDutyPersonUserId(command.getDutyPersonId(), command.getDutyPerson());
             long deptId = parseDeptId(command.getDutyDepartment());
             int retention = command.getRetentionPeriodYears() != null && command.getRetentionPeriodYears() > 0
                 ? command.getRetentionPeriodYears()
@@ -3135,7 +3347,15 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         try {
             Long uid = Long.parseLong(idText.trim());
             List<String> names = jdbcTemplate.queryForList(
-                "select user_name from tpl_user_t where user_id = ? and delete_flag = 'N' limit 1",
+                """
+                select coalesce(
+                         nullif(trim(concat_ws(' ', nullif(user_name, ''), nullif(employee_no, ''))), ''),
+                         cast(user_id as varchar)
+                       )
+                  from tpl_user_t
+                 where user_id = ? and delete_flag = 'N'
+                 limit 1
+                """,
                 String.class,
                 uid
             );
@@ -3152,7 +3372,8 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         }
         for (Map.Entry<String, String> entry : HARD_CODED_EXT_FIELD_ATTR_MAP.entrySet()) {
             String v = ext == null ? null : ext.get(entry.getKey());
-            row.put(entry.getValue(), StringUtils.hasText(v) ? truncateVarchar(v.trim(), 100) : null);
+            String normalized = normalizeExtFieldInputForStorage(entry.getKey(), v);
+            row.put(entry.getValue(), StringUtils.hasText(normalized) ? truncateVarchar(normalized.trim(), 100) : null);
         }
         String refNo = ext == null ? null : ext.get("refNo");
         if (StringUtils.hasText(refNo)) {
@@ -3248,7 +3469,8 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
                 continue;
             }
             String raw = resolveExtRawForBusinessModuleField(ext, f);
-            row.put(col, StringUtils.hasText(raw) ? truncateVarchar(raw.trim(), 500) : null);
+            String normalized = normalizeExtFieldInputForStorage(resolveExtPersonFieldKey(f), raw);
+            row.put(col, StringUtils.hasText(normalized) ? truncateVarchar(normalized.trim(), 500) : null);
         }
     }
 
@@ -3270,7 +3492,8 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         Map<String, String> extValues,
         java.sql.ResultSet rs,
         String bizModuleCode,
-        Map<String, List<BusinessModuleExtField>> moduleFieldCache
+        Map<String, List<BusinessModuleExtField>> moduleFieldCache,
+        Map<String, String> userDisplayById
     ) throws java.sql.SQLException {
         if (!StringUtils.hasText(bizModuleCode)) {
             return;
@@ -3291,12 +3514,33 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
                 continue;
             }
             if (StringUtils.hasText(f.getEnglishFieldName())) {
-                extValues.put(f.getEnglishFieldName().trim(), cell);
+                String key = f.getEnglishFieldName().trim();
+                extValues.put(key, normalizeExtFieldValue(key, cell, userDisplayById));
             }
             if (StringUtils.hasText(f.getFieldCode())) {
-                extValues.put(f.getFieldCode().trim(), cell);
+                String key = f.getFieldCode().trim();
+                extValues.put(key, normalizeExtFieldValue(key, cell, userDisplayById));
             }
         }
+    }
+
+    private boolean isExtPersonField(String fieldKey) {
+        return StringUtils.hasText(fieldKey) && EXT_PERSON_FIELDS.contains(fieldKey.trim());
+    }
+
+    private String normalizeExtFieldValue(String fieldKey, String rawValue, Map<String, String> userDisplayById) {
+        if (!isExtPersonField(fieldKey)) {
+            return rawValue;
+        }
+        return resolveUserDisplayForExtPerson(rawValue, userDisplayById);
+    }
+
+    private String normalizeExtFieldInputForStorage(String fieldKey, String rawValue) {
+        String normalized = normalizeLegacyUserDisplayInput(rawValue);
+        if (normalized == null || !isExtPersonField(fieldKey)) {
+            return normalized;
+        }
+        return resolveUserIdForExtPerson(normalized);
     }
 
     private static String resolveExtRawForBusinessModuleField(Map<String, String> ext, BusinessModuleExtField f) {
@@ -3308,6 +3552,21 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
             raw = ext.get(f.getFieldCode().trim());
         }
         return raw;
+    }
+
+    private String resolveExtPersonFieldKey(BusinessModuleExtField field) {
+        if (field == null) {
+            return "";
+        }
+        String byCode = trimToNull(field.getFieldCode());
+        if (isExtPersonField(byCode)) {
+            return byCode;
+        }
+        String byEnglish = trimToNull(field.getEnglishFieldName());
+        if (isExtPersonField(byEnglish)) {
+            return byEnglish;
+        }
+        return "";
     }
 
     private String truncateVarchar(String value, int maxLen) {
@@ -3323,11 +3582,20 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
     private ArchiveSummaryResponse loadArchiveDetailFromDocumentTable(Long archiveId) {
         Map<String, BusinessModule> businessModuleMap = listBusinessModuleMap();
         Map<String, String> carrierTypeNameMap = listCarrierTypeNameMap();
+        Map<String, String> userDisplayById = loadUserDisplayByIdSnapshot();
         String detailSql = new StringBuilder("""
             select doc_id, doc_biz_no, fdc_document_t.company_code, company_name, biz_module_code, start_period, end_period,
                    arch_place_alpha2_code, origin_place_alpha2_code, doc_organization_code, lifecycle_status,
-                   doc_name, doc_gen_date, doc_resp_person_id, coalesce(u.user_name, cast(fdc_document_t.doc_resp_person_id as varchar)) as duty_person_name,
-                   fdc_document_t.created_by, coalesce(created_u.user_name, cast(fdc_document_t.created_by as varchar)) as created_by_name,
+                   doc_name, doc_gen_date, doc_resp_person_id,
+                   coalesce(
+                     nullif(trim(concat_ws(' ', nullif(u.user_name, ''), nullif(u.employee_no, ''))), ''),
+                     cast(fdc_document_t.doc_resp_person_id as varchar)
+                   ) as duty_person_name,
+                   fdc_document_t.created_by,
+                   coalesce(
+                     nullif(trim(concat_ws(' ', nullif(created_u.user_name, ''), nullif(created_u.employee_no, ''))), ''),
+                     cast(fdc_document_t.created_by as varchar)
+                   ) as created_by_name,
                    doc_resp_dept_id, carrier_type,
                    source_system, security_level, description, fdc_document_t.creation_date as creation_date,
                    attr1, arch_barcode,
@@ -3359,7 +3627,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
                 LocalDateTime creationDate = rs.getObject("creation_date", LocalDateTime.class);
                 String lifecycleStatus = rs.getString("lifecycle_status");
                 String businessModuleCode = rs.getString("biz_module_code");
-                Map<String, String> extVals = extractHardCodedExtValues(rs, businessModuleCode, null);
+                Map<String, String> extVals = extractHardCodedExtValues(rs, businessModuleCode, null, userDisplayById);
                 String visCol = trimToNull(rs.getString("attr1"));
                 String barcodeCol = trimToNull(rs.getString("arch_barcode"));
                 extVals.put("visibility", StringUtils.hasText(visCol) ? visCol : "是");
@@ -4456,7 +4724,10 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         requireText(command.getBeginPeriod(), "beginPeriod");
         requireText(command.getEndPeriod(), "endPeriod");
         requireText(command.getDocumentName(), "documentName");
-        requireText(command.getDutyPerson(), "dutyPerson");
+        if ((command.getDutyPersonId() == null || command.getDutyPersonId() <= 0)
+            && !StringUtils.hasText(command.getDutyPerson())) {
+            throw new BusinessException("dutyPerson or dutyPersonId is required");
+        }
         requireText(command.getDutyDepartment(), "dutyDepartment");
         if (command.getDocumentDate() == null) throw new BusinessException("documentDate is required");
         requireText(command.getSecurityLevelCode(), "securityLevelCode");
@@ -4730,8 +5001,14 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         if (userNameColumn == null) {
             return Map.of();
         }
+        String displayExpr = "user_id";
+        if ("tpl_user_t".equalsIgnoreCase(userTableName)) {
+            displayExpr = "coalesce(nullif(trim(concat_ws(' ', nullif(user_name, ''), nullif(employee_no, ''))), ''), cast(user_id as varchar))";
+        } else {
+            displayExpr = userNameColumn;
+        }
         return jdbcTemplate.query(
-            "select user_id, " + userNameColumn + " as user_name from " + userTableName,
+            "select user_id, " + displayExpr + " as user_name from " + userTableName,
             rs -> {
                 Map<Long, String> result = new LinkedHashMap<>();
                 while (rs.next()) {
@@ -4912,11 +5189,24 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         return archiveExtValueMapper.selectList(new LambdaQueryWrapper<ArchiveExtValue>().in(ArchiveExtValue::getArchiveId, archiveIds)).stream().collect(Collectors.groupingBy(ArchiveExtValue::getArchiveId, LinkedHashMap::new, Collectors.toMap(ArchiveExtValue::getFieldCode, this::resolveExtValue, (left, right) -> right, LinkedHashMap::new)));
     }
 
-    private boolean matchesExtFilters(Map<String, String> extValues, Map<String, String> filters) {
+    private boolean matchesExtFilters(Map<String, String> extValues, Map<String, String> filters, Map<String, String> userDisplayById) {
         return filters.entrySet().stream()
             .filter(entry -> StringUtils.hasText(entry.getValue()))
             .filter(entry -> !"invoiceNo".equals(entry.getKey()) && !"refNo".equals(entry.getKey()))
-            .allMatch(entry -> containsIgnoreCase(extValues.get(entry.getKey()), entry.getValue().trim().toLowerCase(Locale.ROOT)));
+            .allMatch(entry -> {
+                String key = entry.getKey();
+                String expected = normalizeLegacyUserDisplayInput(entry.getValue());
+                expected = expected == null ? "" : expected.toLowerCase(Locale.ROOT);
+                String actual = normalizeLegacyUserDisplayInput(extValues.get(key));
+                if (containsIgnoreCase(actual, expected)) {
+                    return true;
+                }
+                if (isExtPersonField(key)) {
+                    String displayExpected = resolveUserDisplayForExtPerson(expected, userDisplayById);
+                    return containsIgnoreCase(actual, displayExpected.toLowerCase(Locale.ROOT));
+                }
+                return false;
+            });
     }
 
     private void appendHardCodedExtFilterSql(StringBuilder sql, List<Object> params, Map<String, String> extFilters) {
@@ -4997,13 +5287,14 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
     private Map<String, String> extractHardCodedExtValues(
         java.sql.ResultSet rs,
         String bizModuleCode,
-        Map<String, List<BusinessModuleExtField>> moduleFieldCache
+        Map<String, List<BusinessModuleExtField>> moduleFieldCache,
+        Map<String, String> userDisplayById
     ) throws java.sql.SQLException {
         Map<String, String> extValues = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : HARD_CODED_EXT_FIELD_ATTR_MAP.entrySet()) {
             String value = trimToNull(rs.getString(entry.getValue()));
             if (value != null) {
-                extValues.put(entry.getKey(), value);
+                extValues.put(entry.getKey(), normalizeExtFieldValue(entry.getKey(), value, userDisplayById));
             }
         }
         List<String> refValues = new ArrayList<>();
@@ -5016,7 +5307,7 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         if (!refValues.isEmpty()) {
             extValues.put("refNo", String.join(";", refValues));
         }
-        mergeBusinessModuleDocumentAttrsIntoExtValues(extValues, rs, bizModuleCode, moduleFieldCache);
+        mergeBusinessModuleDocumentAttrsIntoExtValues(extValues, rs, bizModuleCode, moduleFieldCache, userDisplayById);
         String country = trimToNull(rs.getString("country_code"));
         String repOffice = trimToNull(rs.getString("rep_office_name"));
         String region = trimToNull(rs.getString("region_name"));
@@ -5026,6 +5317,100 @@ public class ArchiveManagementServiceImpl implements ArchiveManagementService {
         extValues.put("region", region == null ? "" : region);
         extValues.put("companyTag", companyTag == null ? "" : companyTag);
         return extValues;
+    }
+
+    private Map<String, String> loadUserDisplayByIdSnapshot() {
+        try {
+            return jdbcTemplate.query(
+                """
+                select cast(user_id as varchar) as user_id,
+                       coalesce(
+                         nullif(trim(concat_ws(' ', nullif(user_name, ''), nullif(employee_no, ''))), ''),
+                         cast(user_id as varchar)
+                       ) as user_display
+                  from tpl_user_t
+                 where user_id is not null
+                """,
+                (rs) -> {
+                    Map<String, String> result = new HashMap<>();
+                    while (rs.next()) {
+                        String userId = trimToNull(rs.getString("user_id"));
+                        String userDisplay = trimToNull(rs.getString("user_display"));
+                        if (userId != null && userDisplay != null) {
+                            result.put(userId, userDisplay);
+                        }
+                    }
+                    return result;
+                }
+            );
+        } catch (Exception ex) {
+            log.warn("Failed to load tpl_user_t display snapshot", ex);
+            return Map.of();
+        }
+    }
+
+    private String resolveUserDisplayForExtPerson(String rawValue, Map<String, String> userDisplayById) {
+        String normalized = normalizeLegacyUserDisplayInput(rawValue);
+        if (normalized == null) {
+            return "";
+        }
+        if (userDisplayById == null || userDisplayById.isEmpty()) {
+            return normalized;
+        }
+        String byExact = trimToNull(userDisplayById.get(normalized));
+        if (byExact != null) {
+            return byExact;
+        }
+        if (normalized.endsWith(".0")) {
+            String intLike = normalized.substring(0, normalized.length() - 2);
+            String byInt = trimToNull(userDisplayById.get(intLike));
+            if (byInt != null) {
+                return byInt;
+            }
+        }
+        return normalized;
+    }
+
+    private String resolveUserIdForExtPerson(String rawValue) {
+        String normalized = normalizeLegacyUserDisplayInput(rawValue);
+        if (normalized == null) {
+            return null;
+        }
+        if (normalized.matches("^\\d+(?:\\.0+)?$")) {
+            return normalized.endsWith(".0") ? normalized.substring(0, normalized.length() - 2) : normalized;
+        }
+        try {
+            List<String> ids = jdbcTemplate.queryForList(
+                """
+                select cast(user_id as varchar)
+                  from tpl_user_t
+                 where delete_flag = 'N'
+                   and (
+                        user_name = ?
+                     or employee_no = ?
+                     or trim(concat_ws(' ', nullif(user_name, ''), nullif(employee_no, ''))) = ?
+                   )
+                 order by user_id
+                 limit 1
+                """,
+                String.class,
+                normalized, normalized, normalized
+            );
+            if (!ids.isEmpty() && StringUtils.hasText(ids.get(0))) {
+                return ids.get(0).trim();
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to resolve ext person input to user_id: {}", normalized, ex);
+        }
+        return normalized;
+    }
+
+    private String normalizeLegacyUserDisplayInput(String rawValue) {
+        String normalized = trimToNull(rawValue);
+        if (normalized == null) {
+            return null;
+        }
+        return normalized.replaceAll("\\s*\\+\\s*", " ").replaceAll("\\s+", " ").trim();
     }
 
     private List<String> buildKeywordSearchTerms(String keyword) {

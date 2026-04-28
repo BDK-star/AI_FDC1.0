@@ -11,6 +11,7 @@ public class TransferApplicationResponse {
     private Long applicationId;
     private String applicationNumber;
     private Long applicant;
+    private String applicantName;
     private LocalDateTime applicationDate;
     private String department;
     private String busiModuleCode;
@@ -18,6 +19,7 @@ public class TransferApplicationResponse {
     private String expressType;
     private String expressNumber;
     private Long documentRecipient;
+    private String documentRecipientName;
     private String handoverForm;
     private String carrierType;
     private String applicationStatus;

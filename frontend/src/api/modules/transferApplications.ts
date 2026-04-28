@@ -81,6 +81,7 @@ export interface TransferApplicationDetailPayload {
   applicationId: number
   applicationNumber: string
   applicant?: number | null
+  applicantName?: string
   applicationDate?: string | null
   department?: string
   busiModuleCode?: string
@@ -88,6 +89,7 @@ export interface TransferApplicationDetailPayload {
   expressType?: string
   expressNumber?: string
   documentRecipient?: number | null
+  documentRecipientName?: string
   handoverForm?: string
   applicationStatus?: string
   status?: string

@@ -25,8 +25,10 @@ public class PendingDocumentWriteCommand {
     private String documentName;
     /** yyyy-MM-dd HH:mm:ss */
     private String documentDate;
-    /** 登录名，落库为 doc_resp_person_id */
+    /** 归档责任人（兼容文本输入：user_name / employee_no / "user_name employee_no"） */
     private String dutyPerson;
+    /** 归档责任人ID（tpl_user_t.user_id）；优先于 dutyPerson 文本解析 */
+    private Long dutyPersonId;
     /** 可填数字或文本；非数字时落0 */
     private String dutyDepartment;
     private String carrierTypeCode;

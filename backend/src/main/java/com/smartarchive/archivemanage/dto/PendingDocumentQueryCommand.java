@@ -30,6 +30,7 @@ public class PendingDocumentQueryCommand {
     private String country;
     private String repOffice;
     private String region;
+    private String dutyPerson;
     /** 仅返回指定用户创建的文档（fdc_document_t.created_by） */
     private Long createdByUserId;
 }

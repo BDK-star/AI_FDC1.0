@@ -163,8 +163,8 @@ const router = createRouter({
           name: 'archive-management-pending-archive-query',
           component: () => import('../views/archive-management/PendingArchiveQueryView.vue'),
           meta: {
-            title: '待归档数据管理',
-            breadcrumb: ['待归档数据管理'],
+            title: '应归档数据管理',
+            breadcrumb: ['应归档数据管理'],
             description: '对未归档数据进行手工调整。',
             requiresDocumentType: true
           }
@@ -174,8 +174,8 @@ const router = createRouter({
           name: 'archive-management-pending-archive-create',
           component: () => import('../views/archive-management/PendingArchiveCreateView.vue'),
           meta: {
-            title: '创建待归档数据',
-            breadcrumb: ['待归档数据管理', '创建待归档数据'],
+            title: '创建应归档数据',
+            breadcrumb: ['应归档数据管理', '创建应归档数据'],
             description: '参考 .docs/features/F03/reference_html/pages/document_create.html',
             requiresDocumentType: true,
             hidePageHead: true
@@ -187,7 +187,7 @@ const router = createRouter({
           component: () => import('../views/archive-management/PendingArchiveEditView.vue'),
           meta: {
             title: '编辑文档',
-            breadcrumb: ['待归档数据管理', '编辑待归档数据'],
+            breadcrumb: ['应归档数据管理', '编辑应归档数据'],
             description: '参考 .docs/features/F03/reference_html/pages/document_edit.html',
             requiresDocumentType: true,
             hidePageHead: true

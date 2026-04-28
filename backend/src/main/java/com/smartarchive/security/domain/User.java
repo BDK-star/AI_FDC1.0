@@ -11,6 +11,9 @@ public class User {
     private Long userId;
     @TableField("user_name")
     private String userName;
+    /** 员工工号，8 位数字 */
+    @TableField("employee_no")
+    private String employeeNo;
     /** 归档责任部门（创建页按责任人自动带出） */
     private String dutyDepartment;
     /** 工作国家编码，对应产生地 */

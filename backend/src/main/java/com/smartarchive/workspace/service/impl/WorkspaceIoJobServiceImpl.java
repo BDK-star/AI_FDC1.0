@@ -465,7 +465,10 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
                    d.lifecycle_status,
                    d.doc_name as document_name,
                    to_char(d.doc_gen_date, 'YYYY-MM-DD HH24:MI:SS') as document_date,
-                   coalesce(owner.user_name, cast(d.doc_resp_person_id as varchar)) as duty_person,
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(owner.user_name, ''), nullif(owner.employee_no, ''))), ''),
+                     cast(d.doc_resp_person_id as varchar)
+                   ) as duty_person,
                    cast(d.doc_resp_dept_id as varchar) as duty_department,
                    d.carrier_type as carrier_type_code,
                    coalesce(d.attr1, '是') as document_visibility,
@@ -473,7 +476,10 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
                    d.security_level,
                    d.description as remark,
                    to_char(d.creation_date, 'YYYY-MM-DD HH24:MI:SS') as creation_date,
-                   coalesce(cu.user_name, cast(d.created_by as varchar)) as created_by
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(cu.user_name, ''), nullif(cu.employee_no, ''))), ''),
+                     cast(d.created_by as varchar)
+                   ) as created_by
               from fdc_workspace_import_query_result_t r
               join fdc_document_t d
                 on d.doc_id = r.archive_id

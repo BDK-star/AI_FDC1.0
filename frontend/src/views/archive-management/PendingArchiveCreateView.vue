@@ -370,7 +370,14 @@ import {
   uploadPendingAuditAttachment
 } from '../../api/modules/archiveManagement'
 import { fetchArchiveRuleMatch } from '../../api/modules/archiveFlow'
-import { buildModuleQueryTree, fetchBusinessModuleTree, type ModuleQueryTreeNode } from '../../api/modules/businessModule'
+import {
+  buildModuleQueryTree,
+  fetchBusinessModuleTree,
+  filterBusinessModuleTreeByDocumentType,
+  isModuleCodeWithinDocumentType,
+  resolveRootDocumentTypeCodeByModule,
+  type ModuleQueryTreeNode
+} from '../../api/modules/businessModule'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
 import { fetchCompanyProjectCountries, fetchCompanyProjectDetail } from '../../api/modules/companyProject'
 import { fetchUserDutyProfile } from '../../api/modules/security'
@@ -439,6 +446,7 @@ const loadedRetentionYears = ref(10)
 const operationRemark = ref('')
 const auditAttachments = ref<Array<{ fileId: number; fileName?: string; storageKey?: string; fileSize?: number }>>([])
 const companySelectOptions = ref<Array<{ code: string; name: string }>>([])
+const businessModuleSourceTree = ref<BusinessModuleNode[]>([])
 const businessModuleTreeOptions = ref<ModuleQueryTreeNode[]>([])
 const countryNameByCode = ref<Record<string, string>>({})
 /** 当前业务模块下、档案 BASIC 且应用功能含「应收」的扩展字段（fdc_business_module_ext_field_t） */
@@ -619,6 +627,24 @@ function flattenModuleQueryNodes(nodes: ModuleQueryTreeNode[]): LabelValueOption
   return nodes.flatMap((n) => [{ code: n.moduleCode, name: n.moduleName }, ...flattenModuleQueryNodes(n.children || [])])
 }
 
+const syncBusinessModuleOptionsByDocumentType = (documentTypeCode?: string) => {
+  const filtered = filterBusinessModuleTreeByDocumentType(
+    businessModuleSourceTree.value,
+    documentTypeCode || ''
+  )
+  businessModuleTreeOptions.value = buildModuleQueryTree(filtered)
+  if (
+    form.archiveTypeCode &&
+    !isModuleCodeWithinDocumentType(
+      businessModuleSourceTree.value,
+      documentTypeCode || '',
+      form.archiveTypeCode
+    )
+  ) {
+    form.archiveTypeCode = ''
+  }
+}
+
 const applyCompanyInfoToExt = (info: CompanyInfo) => {
   const cc = info.country?.trim() || ''
   if (cc) {
@@ -767,7 +793,7 @@ const syncExtFieldsForDocType = async () => {
 }
 
 const onDocumentTypeChanged = async () => {
-  form.archiveTypeCode = ''
+  syncBusinessModuleOptionsByDocumentType(form.documentTypeCode)
   await syncExtFieldsForDocType()
   await applySelectedCompanyExtFields()
 }
@@ -782,7 +808,34 @@ watch(
 
 watch(
   () => form.archiveTypeCode,
-  () => {
+  async (next) => {
+    const moduleCode = String(next || '').trim()
+    if (moduleCode && form.documentTypeCode.trim()) {
+      if (
+        !isModuleCodeWithinDocumentType(
+          businessModuleSourceTree.value,
+          form.documentTypeCode,
+          moduleCode
+        )
+      ) {
+        const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+        if (rootDocType) {
+          form.documentTypeCode = rootDocType
+          await onDocumentTypeChanged()
+          return
+        }
+        form.archiveTypeCode = ''
+        return
+      }
+    }
+    if (moduleCode && !form.documentTypeCode.trim()) {
+      const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+      if (rootDocType) {
+        form.documentTypeCode = rootDocType
+        await onDocumentTypeChanged()
+        return
+      }
+    }
     if (bootstrappingDraft.value) return
     void syncReceivableModuleExtFields()
   }
@@ -842,7 +895,7 @@ const loadDraftIntoForm = async (docId: number) => {
     form.documentTypeCode = matchOptionCode(options.documentTypes, record.documentTypeCode)
     form.businessCode = (record.businessCode || '').trim()
     form.companyProjectCode = matchOptionCode(companySelectOptions.value, record.companyProjectCode)
-    const flatMods = flattenModuleQueryNodes(businessModuleTreeOptions.value)
+    const flatMods = flattenModuleQueryNodes(buildModuleQueryTree(businessModuleSourceTree.value))
     form.archiveTypeCode =
       matchOptionCode(flatMods, record.businessModuleTypeCode) || (record.businessModuleTypeCode || '').trim()
     form.beginPeriod = record.beginPeriod || ''
@@ -893,7 +946,8 @@ onMounted(async () => {
       (countries || []).map((c) => [c.countryCode, c.countryName])
     )
     companySelectOptions.value = companyInfos.map((c) => ({ code: c.companyCode, name: c.companyName }))
-    businessModuleTreeOptions.value = buildModuleQueryTree(moduleTree)
+    businessModuleSourceTree.value = moduleTree
+    syncBusinessModuleOptionsByDocumentType(form.documentTypeCode)
     const rawResume =
       typeof route.query.resumeDraftId === 'string'
         ? route.query.resumeDraftId.trim()

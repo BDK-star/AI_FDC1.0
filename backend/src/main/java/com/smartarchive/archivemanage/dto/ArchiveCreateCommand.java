@@ -17,6 +17,7 @@ public class ArchiveCreateCommand {
     private String businessCode;
     private String documentName;
     private String dutyPerson;
+    private Long dutyPersonId;
     private String dutyDepartment;
     private LocalDate documentDate;
     private String securityLevelCode;

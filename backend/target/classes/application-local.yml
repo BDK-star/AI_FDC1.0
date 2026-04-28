@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/smart_archive_clean
+    username: postgres
+    password: Qianhui3465
+    driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+archive:
+  ai:
+    # Set to true only after Tesseract is installed and paths are correct.
+    ocr-enabled: false
+    metadata-extract-enabled: true
+    semantic-search-enabled: true
+  ocr:
+    enabled: false
+    # Apple Silicon Homebrew path. Intel Mac is usually /usr/local/...
+    tesseract-path: /opt/homebrew/bin/tesseract
+    tessdata-dir: /opt/homebrew/share/tessdata
+    pdf-dpi: 300
+    timeout-seconds: 180
+
+knowledge-graph:
+  neo4j:
+    enabled: false
+    uri:
+    username:
+    password:
+    database: neo4j
+
+app:
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175,http://localhost:5176,http://127.0.0.1:5176,http://localhost:5177,http://127.0.0.1:5177

@@ -44,7 +44,7 @@
             />
           </el-form-item>
           <el-form-item label="申请人">
-            <el-select v-model="searchForm.applicant" class="input-w180" clearable filterable placeholder="用户 ID">
+            <el-select v-model="searchForm.applicant" class="input-w180" clearable filterable placeholder="用户名 + 工号">
               <el-option v-for="u in userOptions" :key="u.id" :label="u.name" :value="u.id" />
             </el-select>
           </el-form-item>
@@ -96,7 +96,7 @@
             <el-input v-model="searchForm.expressNumber" class="input-w180" placeholder="模糊查询" clearable />
           </el-form-item>
           <el-form-item label="接收人">
-            <el-select v-model="searchForm.documentRecipient" class="input-w180" clearable filterable placeholder="用户 ID">
+            <el-select v-model="searchForm.documentRecipient" class="input-w180" clearable filterable placeholder="用户名 + 工号">
               <el-option v-for="u in userOptions" :key="u.id" :label="u.name" :value="u.id" />
             </el-select>
           </el-form-item>
@@ -203,6 +203,7 @@ import { fetchArchiveCreateOptions } from '../../api/modules/archiveManagement'
 import { buildModuleQueryTree, fetchBusinessModuleTree, type ModuleQueryTreeNode } from '../../api/modules/businessModule'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
 import { fetchDictionaryItems } from '../../api/modules/dictionary'
+import { fetchUsers } from '../../api/modules/security'
 import {
   searchTransferApplicationRecords,
   type TransferApplicationRecordQuery,
@@ -248,11 +249,7 @@ const searchForm = reactive<TransferApplicationRecordQuery>({
   catalogVolumeNo: ''
 })
 
-const userOptions = ref([
-  { id: 1, name: '张三' },
-  { id: 2, name: '李四' },
-  { id: 3, name: '王五' }
-])
+const userOptions = ref<Array<{ id: number; name: string }>>([])
 
 const companyOptions = ref<LabelOption[]>([])
 const documentOrganizationOptions = ref<LabelOption[]>([])
@@ -453,16 +450,21 @@ function notifyColumnSetting() {
 
 onMounted(async () => {
   try {
-    const [options, companies, moduleTree] = await Promise.all([
+    const [options, companies, moduleTree, users] = await Promise.all([
       fetchArchiveCreateOptions(),
       fetchCompanyInfos({ enabledFlag: 'Y' }),
-      fetchBusinessModuleTree().catch((): BusinessModuleNode[] => [])
+      fetchBusinessModuleTree().catch((): BusinessModuleNode[] => []),
+      fetchUsers().catch(() => [])
     ])
     carrierTypeOptions.value = (options.carrierTypes ?? []).map((c) => ({ code: c.code, name: c.name }))
     companyOptions.value = companies.map((c) => ({ code: c.companyCode, name: c.companyName }))
     documentOrganizationOptions.value = (options.documentOrganizations ?? []).map((o) => ({ code: o.code, name: o.name }))
     businessModuleTreeOptions.value = buildModuleQueryTree(moduleTree)
     busiModuleFlatOptions.value = flattenBusinessModulesToLabels(moduleTree)
+    userOptions.value = (users || []).map((u: any) => ({
+      id: Number(u.userId),
+      name: `${u.userName || u.username || `用户-${u.userId}`}${u.employeeNo ? ` ${u.employeeNo}` : ''}`
+    }))
   } catch {
     ElMessage.warning('加载基础选项失败，部分下拉为空')
   }

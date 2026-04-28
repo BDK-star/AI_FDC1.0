@@ -1,0 +1,1 @@
+import{n as e,t}from"./http-BPn9GfZr.js";function n(n){return t(e.get(`/api/base-data/company-infos`,{params:n}))}function r(n){return t(e.post(`/api/base-data/company-infos`,n))}function i(n,r){return t(e.put(`/api/base-data/company-infos/${n}`,r))}function a(n){return t(e.delete(`/api/base-data/company-infos/${n}`))}export{i,a as n,n as r,r as t};

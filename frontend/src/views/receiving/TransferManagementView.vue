@@ -265,10 +265,11 @@ import {
 } from '../../api/modules/documentType'
 import { fetchArchiveRuleMatch } from '../../api/modules/archiveFlow'
 import { fetchArchiveCreateOptions, queryArchives } from '../../api/modules/archiveManagement'
-import { fetchBusinessModuleTree } from '../../api/modules/businessModule'
+import { fetchBusinessModuleTree, filterBusinessModuleTreeByDocumentType, isModuleCodeWithinDocumentType } from '../../api/modules/businessModule'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
 import { fetchCountryRegions } from '../../api/modules/countryRegion'
 import { fetchDictionaryItems } from '../../api/modules/dictionary'
+import { fetchUsers } from '../../api/modules/security'
 import {
   createTransferApplication,
   downloadTransferApplicationDetailAttachment,
@@ -345,8 +346,15 @@ const countryOptions = ref<CountryRegionItem[]>([])
 const provinceOptions = ref<CountryRegionItem[]>([])
 const cityOptions = ref<CountryRegionItem[]>([])
 
+const filteredBusinessModuleTree = computed(() =>
+  filterBusinessModuleTreeByDocumentType(
+    businessModuleTree.value || [],
+    String(headerForm.documentTypeCode || '')
+  )
+)
+
 const businessModuleTreeOptions = computed(() =>
-  (businessModuleTree.value || []).map(mapBusinessModuleToTreeOption)
+  (filteredBusinessModuleTree.value || []).map(mapBusinessModuleToTreeOption)
 )
 
 const archiveDestinationOptions = computed(() =>
@@ -360,7 +368,7 @@ const archiveDestinationOptions = computed(() =>
 /** 与应归档新建页一致：用于将匹配结果对齐到下拉选项编码 */
 const archiveDestinationsFlat = ref<LabelOption[]>([])
 const documentOrganizationOptions = ref<LabelOption[]>([])
-const userOptions = ref([{ id: 1, name: '张三' }, { id: 2, name: '李四' }, { id: 3, name: '王五' }])
+const userOptions = ref<Array<{ id: number; name: string; dutyDepartment?: string }>>([])
 const applyMethodOptions = ref<LabelOption[]>([{ code: 'DIRECT', name: '直接移交' }, { code: 'MAIL', name: '邮寄' }])
 const expressTypeOptions = ref<LabelOption[]>([{ code: 'SF', name: '顺丰' }, { code: 'EMS', name: 'EMS' }, { code: 'OTHER', name: '其他' }])
 const handoverFormOptions = ref<LabelOption[]>([])
@@ -756,6 +764,19 @@ async function loadRowExtFields(row: TransferDetailRow, preserveValues: boolean)
 }
 
 async function onDetailBusiModuleChange(row: TransferDetailRow) {
+  const moduleCode = String(row.busiModuleCode || '').trim()
+  const docTypeCode = String(headerForm.documentTypeCode || '').trim()
+  if (
+    moduleCode &&
+    docTypeCode &&
+    !isModuleCodeWithinDocumentType(businessModuleTree.value || [], docTypeCode, moduleCode)
+  ) {
+    ElMessage.warning('所选业务模块不属于当前文档类型，请重新选择')
+    row.busiModuleCode = ''
+    row.extFieldDefs = []
+    row.extValues = {}
+    return
+  }
   await loadRowExtFields(row, false)
   await applyArchiveRuleMatchForRow(row)
 }
@@ -773,6 +794,21 @@ async function handleHeaderDocTypeChange() {
       r.busiModuleCode = ''
       r.extFieldDefs = []
       r.extValues = {}
+    })
+  } else {
+    detailRows.value.forEach((r) => {
+      if (
+        r.busiModuleCode &&
+        !isModuleCodeWithinDocumentType(
+          businessModuleTree.value || [],
+          headerForm.documentTypeCode,
+          r.busiModuleCode
+        )
+      ) {
+        r.busiModuleCode = ''
+        r.extFieldDefs = []
+        r.extValues = {}
+      }
     })
   }
   await loadTransferFieldVisibility()
@@ -1102,14 +1138,15 @@ async function loadGeoRegionsForTransfer() {
 
 onMounted(async () => {
   headerForm.applicationDate = new Date().toISOString().slice(0, 10)
-  const [tree, options, companies, businessModules, applyMethods, expressTypes, handoverForms] = await Promise.all([
+  const [tree, options, companies, businessModules, applyMethods, expressTypes, handoverForms, users] = await Promise.all([
     fetchDocumentTypeTree(),
     fetchArchiveCreateOptions(),
     fetchCompanyInfos({ enabledFlag: 'Y' }),
     fetchBusinessModuleTree(),
     fetchDictionaryItems('TRANSFER_APPLY_METHOD').catch(() => []),
     fetchDictionaryItems('TRANSFER_EXPRESS_TYPE').catch(() => []),
-    fetchDictionaryItems('HANDOVER_FORM').catch(() => [])
+    fetchDictionaryItems('HANDOVER_FORM').catch(() => []),
+    fetchUsers().catch(() => [])
   ])
   documentTypeTree.value = tree
   companyProjectOptions.value = (companies || []).map((item) => ({ code: item.companyCode, name: item.companyName }))
@@ -1124,6 +1161,17 @@ onMounted(async () => {
   if (applyMethodDict.length) applyMethodOptions.value = applyMethodDict
   if (expressDict.length) expressTypeOptions.value = expressDict
   handoverFormOptions.value = handoverFormDict
+  userOptions.value = (users || []).map((u: any) => ({
+    id: Number(u.userId),
+    name: `${u.userName || u.username || `用户-${u.userId}`}${u.employeeNo ? ` ${u.employeeNo}` : ''}`,
+    dutyDepartment: u.dutyDepartment || ''
+  }))
+  const me = userOptions.value.find((u) => u.id === currentUserId.value) || userOptions.value[0]
+  if (me) {
+    currentUserId.value = me.id
+    currentUserName.value = me.name
+    if (me.dutyDepartment) currentUserDept.value = me.dutyDepartment
+  }
   const editingIdRaw = route.query.applicationId
   const editingId = typeof editingIdRaw === 'string' ? Number(editingIdRaw) : NaN
   if (Number.isFinite(editingId) && editingId > 0) {

@@ -1,6 +1,8 @@
 package com.smartarchive.documenttypeconfig.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.smartarchive.businessmodule.domain.BusinessModule;
+import com.smartarchive.businessmodule.mapper.BusinessModuleMapper;
 import com.smartarchive.common.exception.BusinessException;
 import com.smartarchive.documenttypeconfig.domain.DocumentTypeConfig;
 import com.smartarchive.documenttypeconfig.dto.DocumentTypeConfigQueryCommand;
@@ -32,14 +34,18 @@ import org.springframework.util.StringUtils;
 public class DocumentTypeConfigServiceImpl implements DocumentTypeConfigService {
     private static final Long SYSTEM_OPERATOR_ID = 1L;
     private static final Long DEFAULT_TENANT_ID = 1L;
+    private static final String DEFAULT_SECURITY_LEVEL_CODE = "INTERNAL_PUBLIC";
 
     private final DocumentTypeConfigMapper mapper;
+    private final BusinessModuleMapper businessModuleMapper;
 
     @Override
     public List<DocumentTypeConfigResponse> list(DocumentTypeConfigQueryCommand command) {
         LambdaQueryWrapper<DocumentTypeConfig> wrapper = new LambdaQueryWrapper<DocumentTypeConfig>()
             .eq(DocumentTypeConfig::getTenantid, normalizeTenant(command.getTenantid()))
             .eq(DocumentTypeConfig::getDeleteFlag, "N")
+            .isNull(DocumentTypeConfig::getParentCode)
+            .eq(DocumentTypeConfig::getLevelNum, 1)
             .orderByDesc(DocumentTypeConfig::getLastUpdateDate)
             .orderByDesc(DocumentTypeConfig::getDocumentTypeId);
         if (StringUtils.hasText(command.getDocTypeCode())) {
@@ -63,6 +69,7 @@ public class DocumentTypeConfigServiceImpl implements DocumentTypeConfigService 
         DocumentTypeConfig entity = new DocumentTypeConfig();
         fillEntity(entity, command, tenantId, true);
         mapper.insert(entity);
+        syncRootBusinessModule(entity);
         return toResponse(entity);
     }
 
@@ -75,6 +82,7 @@ public class DocumentTypeConfigServiceImpl implements DocumentTypeConfigService 
         ensureCodeUnique(code, tenantId, documentTypeId);
         fillEntity(entity, command, tenantId, false);
         mapper.updateById(entity);
+        syncRootBusinessModule(entity);
         return toResponse(entity);
     }
 
@@ -195,6 +203,10 @@ public class DocumentTypeConfigServiceImpl implements DocumentTypeConfigService 
     private void fillEntity(DocumentTypeConfig entity, DocumentTypeConfigSaveCommand command, Long tenantId, boolean creating) {
         entity.setDocTypeCode(requireText(command.getDocTypeCode(), "docTypeCode"));
         entity.setDocTypeDescription(requireText(command.getDocTypeDescription(), "docTypeDescription"));
+        entity.setParentCode(null);
+        entity.setLevelNum(1);
+        entity.setAncestorPath("");
+        entity.setSortOrder(entity.getSortOrder() == null || entity.getSortOrder() <= 0 ? nextRootSortOrder() : entity.getSortOrder());
         entity.setEnableFlag(normalizeFlag(command.getEnableFlag(), "Y"));
         entity.setDeleteFlag("N");
         entity.setTenantid(tenantId);
@@ -205,6 +217,67 @@ public class DocumentTypeConfigServiceImpl implements DocumentTypeConfigService 
         }
         entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
         entity.setLastUpdateDate(LocalDateTime.now());
+    }
+
+    private Integer nextRootSortOrder() {
+        Long count = mapper.selectCount(new LambdaQueryWrapper<DocumentTypeConfig>()
+            .eq(DocumentTypeConfig::getDeleteFlag, "N")
+            .isNull(DocumentTypeConfig::getParentCode)
+            .eq(DocumentTypeConfig::getLevelNum, 1));
+        return count.intValue() + 1;
+    }
+
+    private void syncRootBusinessModule(DocumentTypeConfig docType) {
+        String code = requireText(docType.getDocTypeCode(), "docTypeCode");
+        String name = requireText(docType.getDocTypeDescription(), "docTypeDescription");
+        BusinessModule existing = businessModuleMapper.selectOne(new LambdaQueryWrapper<BusinessModule>()
+            .eq(BusinessModule::getModuleCode, code)
+            .eq(BusinessModule::getDeleteFlag, "N")
+            .last("limit 1"));
+        LocalDateTime now = LocalDateTime.now();
+        if (existing == null) {
+            BusinessModule entity = new BusinessModule();
+            entity.setModuleCode(code);
+            entity.setModuleName(name);
+            entity.setParentCode(null);
+            entity.setLevelNum(1);
+            entity.setAncestorPath("");
+            entity.setEnabledFlag(normalizeFlag(docType.getEnableFlag(), "Y"));
+            entity.setSecurityLevel(DEFAULT_SECURITY_LEVEL_CODE);
+            entity.setIntegrationType("不集成");
+            entity.setDescription(name);
+            entity.setRemark(null);
+            entity.setSortOrder(docType.getSortOrder() == null ? 1 : docType.getSortOrder());
+            entity.setDeleteFlag("N");
+            entity.setCreatedBy(SYSTEM_OPERATOR_ID);
+            entity.setCreationDate(now);
+            entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
+            entity.setLastUpdateDate(now);
+            businessModuleMapper.insert(entity);
+            return;
+        }
+        businessModuleMapper.updateById(buildRootModuleUpdate(existing, docType, name, now));
+    }
+
+    private BusinessModule buildRootModuleUpdate(BusinessModule existing, DocumentTypeConfig docType, String name, LocalDateTime now) {
+        existing.setModuleName(name);
+        existing.setParentCode(null);
+        existing.setLevelNum(1);
+        existing.setAncestorPath("");
+        existing.setEnabledFlag(normalizeFlag(docType.getEnableFlag(), "Y"));
+        existing.setSortOrder(docType.getSortOrder() == null ? existing.getSortOrder() : docType.getSortOrder());
+        if (!StringUtils.hasText(existing.getSecurityLevel())) {
+            existing.setSecurityLevel(DEFAULT_SECURITY_LEVEL_CODE);
+        }
+        if (!StringUtils.hasText(existing.getIntegrationType())) {
+            existing.setIntegrationType("不集成");
+        }
+        if (!StringUtils.hasText(existing.getDescription())) {
+            existing.setDescription(name);
+        }
+        existing.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
+        existing.setLastUpdateDate(now);
+        return existing;
     }
 
     private void ensureCodeUnique(String code, Long tenantId, Long ignoreId) {

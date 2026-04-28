@@ -4,7 +4,7 @@
       <div>
         <span>Business Module Config</span>
         <h2>业务模块配置</h2>
-        <p>按层级维护业务模块，并为每个层级配置附件、业务基本信息的扩展字段。</p>
+        <p>按层级维护业务模块，并为每个层级配置附件、文档的扩展字段。</p>
       </div>
     </section>
 
@@ -116,7 +116,9 @@
               <div>
                 <el-button size="small" type="primary" @click="openAddModuleDialog">新增</el-button>
                 <el-button size="small" :disabled="!selectedNode" @click="openEditDialog">编辑</el-button>
-                <el-button size="small" @click="triggerModuleImport">导入</el-button>
+                <el-tooltip content="CSV 导入时，密级列支持填写字典编码或名称" placement="top">
+                  <el-button size="small" @click="triggerModuleImport">导入</el-button>
+                </el-tooltip>
                 <el-button size="small" @click="exportModules">导出</el-button>
                 <input ref="moduleImportInputRef" class="hidden-file-input" type="file" accept=".csv,text/csv" @change="importModules" />
               </div>
@@ -127,10 +129,10 @@
             <el-descriptions-item label="业务模块编码">{{ selectedNode.moduleCode }}</el-descriptions-item>
             <el-descriptions-item label="业务模块名称">{{ selectedNode.moduleName }}</el-descriptions-item>
             <el-descriptions-item label="排序">{{ selectedNode.sortOrder }}</el-descriptions-item>
-            <el-descriptions-item label="密级">{{ selectedNode.securityLevel || '公开' }}</el-descriptions-item>
+            <el-descriptions-item label="密级">{{ resolveSecurityLevelName(selectedNode.securityLevelCode || selectedNode.securityLevel || 'INTERNAL_PUBLIC') }}</el-descriptions-item>
             <el-descriptions-item label="集成类型">{{ selectedNode.integrationType || '不集成' }}</el-descriptions-item>
             <el-descriptions-item label="启用标志">{{ selectedNode.enabledFlag === 'Y' ? '启用' : '停用' }}</el-descriptions-item>
-            <el-descriptions-item label="修改人">{{ selectedNode.lastUpdatedBy || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="修改人">{{ resolveUserDisplayById(selectedNode.lastUpdatedBy) }}</el-descriptions-item>
             <el-descriptions-item label="更新时间">{{ selectedNode.lastUpdateDate || '-' }}</el-descriptions-item>
             <el-descriptions-item label="描述" :span="2">{{ selectedNode.description || '无' }}</el-descriptions-item>
             <el-descriptions-item label="备注" :span="2">{{ selectedNode.remark || '无' }}</el-descriptions-item>
@@ -146,7 +148,7 @@
             </div>
           </template>
           <el-tabs v-model="activeScope" @tab-change="loadFields">
-            <el-tab-pane label="档案扩展字段" name="BASIC" />
+            <el-tab-pane label="文档扩展字段" name="BASIC" />
             <el-tab-pane label="附件扩展字段" name="ATTACHMENT" />
           </el-tabs>
           <el-form class="field-query" :model="fieldQueryForm" label-position="top">
@@ -157,7 +159,7 @@
             </el-form-item>
             <el-form-item label="扩展字段">
               <el-select v-model="fieldQueryForm.extAttributes" multiple clearable collapse-tags collapse-tags-tooltip placeholder="请选择扩展字段">
-                <el-option v-for="item in extAttributeOptions" :key="item" :label="item" :value="item" />
+                <el-option v-for="item in queryExtAttributeOptions" :key="item" :label="item" :value="item" />
               </el-select>
             </el-form-item>
             <el-form-item label="查询">
@@ -251,10 +253,8 @@
         <el-form-item label="业务模块名称" required><el-input v-model="moduleForm.moduleName" /></el-form-item>
         <el-form-item label="排序"><el-input-number v-model="moduleForm.sortOrder" :min="1" style="width: 100%" /></el-form-item>
         <el-form-item label="密级">
-          <el-select v-model="moduleForm.securityLevel">
-            <el-option label="公开" value="公开" />
-            <el-option label="秘密" value="秘密" />
-            <el-option label="机密" value="机密" />
+          <el-select v-model="moduleForm.securityLevelCode" placeholder="请选择密级">
+            <el-option v-for="item in securityLevelOptions" :key="item.code" :label="item.name" :value="item.code" />
           </el-select>
         </el-form-item>
         <el-form-item label="集成类型">
@@ -273,25 +273,13 @@
 
     <el-dialog v-model="fieldDialogVisible" :title="fieldMode === 'create' ? '新增扩展字段' : '编辑扩展字段'" width="560px">
       <el-form label-position="top" :model="fieldForm">
-        <el-form-item label="字段归属"><el-radio-group v-model="fieldForm.fieldScope"><el-radio value="BASIC">业务基本信息</el-radio><el-radio value="ATTACHMENT">附件</el-radio></el-radio-group></el-form-item>
+        <el-form-item label="字段归属"><el-radio-group v-model="fieldForm.fieldScope"><el-radio value="BASIC">文档</el-radio><el-radio value="ATTACHMENT">附件</el-radio></el-radio-group></el-form-item>
         <el-form-item label="应用功能" required>
           <el-select v-model="fieldForm.applicationFunctions" multiple collapse-tags collapse-tags-tooltip placeholder="请选择应用功能">
-            <el-option label="应收" value="应收" />
+            <el-option label="应归档数据" value="应归档数据" />
             <el-option label="移交" value="移交" />
           </el-select>
         </el-form-item>
-        <el-form-item label="扩展字段" required>
-          <el-select v-model="fieldForm.extAttribute" clearable placeholder="请选择扩展字段">
-            <el-option v-for="item in extAttributeOptions" :key="item" :label="item" :value="item" :disabled="isExtAttributeUsed(item)">
-              <div class="ext-attribute-option">
-                <span>{{ item }}</span>
-                <el-tag v-if="isExtAttributeUsed(item)" size="small" type="warning" effect="light">已使用</el-tag>
-              </div>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="字段名" required><el-input v-model="fieldForm.fieldName" /></el-form-item>
-        <el-form-item label="字段编码" required><el-input v-model="fieldForm.englishFieldName" /></el-form-item>
         <el-form-item label="数据类型" required>
           <el-select v-model="fieldForm.dataType">
             <el-option label="文本" value="TEXT" />
@@ -302,6 +290,18 @@
             <el-option label="是/否" value="BOOLEAN" />
           </el-select>
         </el-form-item>
+        <el-form-item label="扩展字段" required>
+          <el-select v-model="fieldForm.extAttribute" clearable placeholder="请先选择字段类型，再选择扩展字段">
+            <el-option v-for="item in availableExtAttributeOptions" :key="item" :label="item" :value="item" :disabled="isExtAttributeUsed(item)">
+              <div class="ext-attribute-option">
+                <span>{{ item }}</span>
+                <el-tag v-if="isExtAttributeUsed(item)" size="small" type="warning" effect="light">已使用</el-tag>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="字段名" required><el-input v-model="fieldForm.fieldName" /></el-form-item>
+        <el-form-item label="字段编码" required><el-input v-model="fieldForm.englishFieldName" /></el-form-item>
         <div class="field-options">
           <el-form-item label="查询"><el-switch v-model="fieldForm.queryFlag" active-value="Y" inactive-value="N" /></el-form-item>
           <el-form-item label="必填"><el-switch v-model="fieldForm.requiredFlag" active-value="Y" inactive-value="N" /></el-form-item>
@@ -316,7 +316,7 @@
 
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   buildModuleQueryTree,
   createBusinessModule,
@@ -332,6 +332,8 @@ import {
   type BusinessModuleExtFieldCommand,
   type BusinessModuleParentOption
 } from '../../api/modules/businessModule'
+import { fetchDictionaryItems } from '../../api/modules/dictionary'
+import { fetchUsers } from '../../api/modules/security'
 import { fetchDocumentTypeTree } from '../../api/modules/documentType'
 import type { BusinessModuleExtField, BusinessModuleNode, DocumentTypeTreeNode } from '../../types'
 
@@ -350,6 +352,8 @@ const selectedNode = ref<BusinessModuleNode>()
 const hasManualModuleSelection = ref(false)
 const moduleTreeRef = ref()
 const moduleImportInputRef = ref<HTMLInputElement>()
+const securityLevelOptions = ref<Array<{ code: string; name: string }>>([])
+const userDisplayById = ref<Record<number, string>>({})
 const fields = ref<BusinessModuleExtField[]>([])
 const usedExtAttributes = ref<Set<string>>(new Set())
 const areModuleNodesExpanded = ref(true)
@@ -360,10 +364,19 @@ const moduleMode = ref<'create' | 'edit'>('create')
 const fieldMode = ref<'create' | 'edit'>('create')
 const editingFieldCode = ref('')
 
-const moduleForm = reactive<BusinessModuleCommand>({ moduleCode: '', moduleName: '', parentCode: '', enabledFlag: 'Y', sortOrder: 1, securityLevel: '公开', integrationType: '不集成', description: '', remark: '' })
+const moduleForm = reactive<BusinessModuleCommand>({ moduleCode: '', moduleName: '', parentCode: '', enabledFlag: 'Y', sortOrder: 1, securityLevelCode: 'INTERNAL_PUBLIC', integrationType: '不集成', description: '', remark: '' })
 const fieldForm = reactive<BusinessModuleExtFieldCommand>({ fieldCode: '', fieldScope: 'BASIC', applicationFunctions: [], extAttribute: undefined, fieldName: '', englishFieldName: '', dataType: 'TEXT', queryFlag: 'N', requiredFlag: 'N', enabledFlag: 'Y', sortOrder: 1 })
-const applicationFunctionOptions = ['应收', '移交'] as const
-const extAttributeOptions = ['ATTR1', 'ATTR2', 'ATTR3', 'ATTR4', 'ATTR5', 'ATTR6'] as const
+const applicationFunctionOptions = ['应归档数据', '移交'] as const
+const buildAttrRange = (prefix: string, start: number, end: number) =>
+  Array.from({ length: end - start + 1 }, (_, index) => `${prefix}${start + index}`)
+const BASIC_TEXT_ATTRS = buildAttrRange('ATTR', 1, 40)
+const BASIC_NUMBER_ATTRS = buildAttrRange('ATTR', 41, 60)
+const BASIC_DATE_ATTRS = buildAttrRange('ATTR', 61, 80)
+const BASIC_DATETIME_ATTRS = buildAttrRange('ATTR', 81, 100)
+const ATTACHMENT_TEXT_ATTRS = buildAttrRange('ATTRIBUTE', 1, 20)
+const ATTACHMENT_NUMBER_ATTRS = buildAttrRange('ATTRIBUTE', 21, 30)
+const ATTACHMENT_DATE_ATTRS = buildAttrRange('ATTRIBUTE', 31, 40)
+const ATTACHMENT_DATETIME_ATTRS = buildAttrRange('ATTRIBUTE', 41, 50)
 const moduleQuery = reactive<{ moduleCodes: string[]; integrationType: string; enabledFlag: '' | 'Y' | 'N' }>({
   moduleCodes: [],
   integrationType: '',
@@ -416,17 +429,37 @@ const documentTypeOptions = computed(() => flattenDocumentTypes(documentTypeTree
 const isRootModuleCreate = computed(() => moduleMode.value === 'create' && !moduleForm.parentCode)
 const flagText = (flag: string) => flag === 'Y' ? '是' : '否'
 const filteredFields = computed(() => fields.value.filter(field => {
-  const appMatched = !fieldQuery.applicationFunctions.length || fieldQuery.applicationFunctions.some(item => field.applicationFunctions?.includes(item as '应收' | '移交'))
+  const appMatched = !fieldQuery.applicationFunctions.length || fieldQuery.applicationFunctions.some(item => field.applicationFunctions?.includes(item as '应归档数据' | '移交'))
   const attrMatched = !fieldQuery.extAttributes.length || Boolean(field.extAttribute && fieldQuery.extAttributes.includes(field.extAttribute))
   const queryMatched = !fieldQuery.queryFlags.length || fieldQuery.queryFlags.includes(field.queryFlag)
   const requiredMatched = !fieldQuery.requiredFlags.length || fieldQuery.requiredFlags.includes(field.requiredFlag)
   const enabledMatched = !fieldQuery.enabledFlags.length || fieldQuery.enabledFlags.includes(field.enabledFlag)
   return appMatched && attrMatched && queryMatched && requiredMatched && enabledMatched
 }))
+const queryExtAttributeOptions = computed(() =>
+  activeScope.value === 'BASIC'
+    ? [...BASIC_TEXT_ATTRS, ...BASIC_NUMBER_ATTRS, ...BASIC_DATE_ATTRS, ...BASIC_DATETIME_ATTRS]
+    : [...ATTACHMENT_TEXT_ATTRS, ...ATTACHMENT_NUMBER_ATTRS, ...ATTACHMENT_DATE_ATTRS, ...ATTACHMENT_DATETIME_ATTRS]
+)
+const availableExtAttributeOptions = computed(() => {
+  if (fieldForm.fieldScope === 'BASIC') {
+    if (fieldForm.dataType === 'NUMBER') return BASIC_NUMBER_ATTRS
+    if (fieldForm.dataType === 'DATE') return BASIC_DATE_ATTRS
+    if (fieldForm.dataType === 'DATETIME') return BASIC_DATETIME_ATTRS
+    return BASIC_TEXT_ATTRS
+  }
+  if (fieldForm.dataType === 'NUMBER') return ATTACHMENT_NUMBER_ATTRS
+  if (fieldForm.dataType === 'DATE') return ATTACHMENT_DATE_ATTRS
+  if (fieldForm.dataType === 'DATETIME') return ATTACHMENT_DATETIME_ATTRS
+  return ATTACHMENT_TEXT_ATTRS
+})
 const pagedFields = computed(() => {
   const start = (fieldPagination.currentPage - 1) * fieldPagination.pageSize
   return filteredFields.value.slice(start, start + fieldPagination.pageSize)
 })
+const securityLevelNameByCode = computed(() =>
+  Object.fromEntries(securityLevelOptions.value.map((item) => [item.code, item.name]))
+)
 
 function createEmptyFieldQuery(): FieldQueryState {
   return {
@@ -499,6 +532,33 @@ function normalizeFieldCurrentPage() {
   if (fieldPagination.currentPage > maxPage) fieldPagination.currentPage = maxPage
 }
 
+function resolveSecurityLevelName(codeOrName?: string) {
+  const text = String(codeOrName || '').trim()
+  if (!text) return ''
+  return securityLevelNameByCode.value[text] || text
+}
+
+function resolveSecurityLevelCode(codeOrName?: string) {
+  const text = String(codeOrName || '').trim()
+  if (!text) return 'INTERNAL_PUBLIC'
+  const byCode = securityLevelOptions.value.find((item) => item.code === text)
+  if (byCode) return byCode.code
+  const byName = securityLevelOptions.value.find((item) => item.name === text)
+  if (byName) return byName.code
+  return text
+}
+
+function resolveUserDisplayById(userId?: number) {
+  if (!userId || userId <= 0) return '-'
+  return userDisplayById.value[userId] || String(userId)
+}
+
+function isKnownSecurityLevel(value?: string) {
+  const text = String(value || '').trim()
+  if (!text) return true
+  return securityLevelOptions.value.some((item) => item.code === text || item.name === text)
+}
+
 function handleFieldPageSizeChange() {
   fieldPagination.currentPage = 1
 }
@@ -513,6 +573,24 @@ async function loadTree() {
   parentOptionSource.value = options
   normalizeTreeCurrentPage()
   await syncSelectedNodeWithFilteredTree()
+}
+
+async function loadSecurityLevels() {
+  const items = await fetchDictionaryItems('SECURITY_LEVEL')
+  securityLevelOptions.value = items.map((item) => ({
+    code: item.itemCode,
+    name: item.itemName
+  }))
+}
+
+async function loadUserDisplays() {
+  const users = await fetchUsers()
+  userDisplayById.value = Object.fromEntries(
+    users.map((u) => [
+      Number(u.userId),
+      `${u.userName || u.username || `用户-${u.userId}`}${u.employeeNo ? ` ${u.employeeNo}` : ''}`
+    ])
+  )
 }
 
 async function syncSelectedNodeWithFilteredTree() {
@@ -634,7 +712,7 @@ function resetModuleForm(parentCode = '') {
   moduleForm.parentCode = parentCode
   moduleForm.enabledFlag = 'Y'
   moduleForm.sortOrder = 1
-  moduleForm.securityLevel = '公开'
+  moduleForm.securityLevelCode = 'INTERNAL_PUBLIC'
   moduleForm.integrationType = '不集成'
   moduleForm.description = ''
   moduleForm.remark = ''
@@ -647,7 +725,7 @@ function formatModuleCsvRow(module: BusinessModuleNode) {
     module.parentCode || '',
     String(module.levelNum || ''),
     String(module.sortOrder || ''),
-    module.securityLevel || '公开',
+    resolveSecurityLevelName(module.securityLevelCode || module.securityLevel || 'INTERNAL_PUBLIC'),
     module.integrationType || '不集成',
     module.enabledFlag === 'Y' ? '启用' : '停用',
     module.description || '',
@@ -745,10 +823,15 @@ async function importModules(event: Event) {
     let createdCount = 0
     let updatedCount = 0
     for (const record of records) {
+      const rowNo = records.indexOf(record) + 2
       const moduleCode = getImportValue(record, '业务模块编码')
       const moduleName = getImportValue(record, '业务模块名称')
       if (!moduleCode || !moduleName) {
         throw new Error('业务模块编码、业务模块名称不能为空')
+      }
+      const securityRaw = getImportValue(record, '密级')
+      if (!isKnownSecurityLevel(securityRaw)) {
+        throw new Error(`第 ${rowNo} 行密级无效：请填写字典编码或名称`)
       }
       const parentCode = getImportValue(record, '上级业务模块编码')
       const payload = {
@@ -757,7 +840,7 @@ async function importModules(event: Event) {
         parentCode: parentCode || undefined,
         enabledFlag: normalizeImportedFlag(getImportValue(record, '启用标志')),
         sortOrder: Number(getImportValue(record, '排序') || 1),
-        securityLevel: (getImportValue(record, '密级') || '公开') as BusinessModuleCommand['securityLevel'],
+        securityLevelCode: resolveSecurityLevelCode(securityRaw || 'INTERNAL_PUBLIC'),
         integrationType: (getImportValue(record, '集成类型') || '不集成') as BusinessModuleCommand['integrationType'],
         description: getImportValue(record, '描述'),
         remark: getImportValue(record, '备注')
@@ -798,7 +881,7 @@ function openEditDialog() {
   moduleForm.parentCode = selectedNode.value.parentCode || ''
   moduleForm.enabledFlag = selectedNode.value.enabledFlag
   moduleForm.sortOrder = selectedNode.value.sortOrder || 1
-  moduleForm.securityLevel = selectedNode.value.securityLevel || '公开'
+  moduleForm.securityLevelCode = resolveSecurityLevelCode(selectedNode.value.securityLevelCode || selectedNode.value.securityLevel || 'INTERNAL_PUBLIC')
   moduleForm.integrationType = selectedNode.value.integrationType || '不集成'
   moduleForm.description = selectedNode.value.description || ''
   moduleForm.remark = selectedNode.value.remark || ''
@@ -811,7 +894,7 @@ async function saveModule() {
   if (moduleMode.value === 'create') {
     selectedNode.value = await createBusinessModule({ ...moduleForm, moduleCode: moduleForm.moduleCode.trim(), moduleName: moduleForm.moduleName.trim(), parentCode: moduleForm.parentCode || undefined })
   } else {
-    selectedNode.value = await updateBusinessModule(moduleForm.moduleCode, { moduleName: moduleForm.moduleName.trim(), parentCode: moduleForm.parentCode || undefined, enabledFlag: moduleForm.enabledFlag, sortOrder: moduleForm.sortOrder, securityLevel: moduleForm.securityLevel, integrationType: moduleForm.integrationType, description: moduleForm.description, remark: moduleForm.remark })
+    selectedNode.value = await updateBusinessModule(moduleForm.moduleCode, { moduleName: moduleForm.moduleName.trim(), parentCode: moduleForm.parentCode || undefined, enabledFlag: moduleForm.enabledFlag, sortOrder: moduleForm.sortOrder, securityLevelCode: moduleForm.securityLevelCode, integrationType: moduleForm.integrationType, description: moduleForm.description, remark: moduleForm.remark })
   }
   moduleDialogVisible.value = false
   await loadTree()
@@ -842,6 +925,16 @@ function resetFieldForm() {
   fieldForm.sortOrder = 1
   editingFieldCode.value = ''
 }
+
+watch(
+  () => [fieldForm.fieldScope, fieldForm.dataType],
+  () => {
+    if (!fieldForm.extAttribute) return
+    if (!availableExtAttributeOptions.value.includes(fieldForm.extAttribute)) {
+      fieldForm.extAttribute = undefined
+    }
+  }
+)
 
 function openFieldDialog(field?: BusinessModuleExtField) {
   if (!selectedNode.value) return ElMessage.warning('请先选择业务模块')
@@ -897,7 +990,7 @@ async function removeField(field: BusinessModuleExtField) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadTree(), loadDocumentTypeOptions()])
+  await Promise.all([loadSecurityLevels(), loadUserDisplays(), loadTree(), loadDocumentTypeOptions()])
 })
 </script>
 

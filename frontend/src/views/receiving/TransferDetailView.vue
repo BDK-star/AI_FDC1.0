@@ -19,7 +19,7 @@
                   <el-input :model-value="labelOf(statusOptions, detailData.applicationStatus)" class="input-w180" disabled />
                 </el-form-item>
                 <el-form-item label="申请人">
-                  <el-input :model-value="formatUser(detailData.applicant)" class="input-w180" disabled />
+                  <el-input :model-value="detailData.applicantName || formatUser(detailData.applicant)" class="input-w180" disabled />
                 </el-form-item>
                 <el-form-item label="申请日期">
                   <el-input :model-value="formatDateTime(detailData.applicationDate)" class="input-w180" disabled />
@@ -34,7 +34,7 @@
                   <el-input :model-value="detailData.expressNumber || '-'" class="input-w180" disabled />
                 </el-form-item>
                 <el-form-item label="文档接收人">
-                  <el-input :model-value="formatUser(detailData.documentRecipient)" class="input-w180" disabled />
+                  <el-input :model-value="detailData.documentRecipientName || formatUser(detailData.documentRecipient)" class="input-w180" disabled />
                 </el-form-item>
                 <el-form-item v-if="showHandoverFormField" label="移交形式">
                   <el-input :model-value="labelOf(handoverFormOptions, detailData.handoverForm)" class="input-w180" disabled />
@@ -125,6 +125,7 @@ import { fetchArchiveCreateOptions } from '../../api/modules/archiveManagement'
 import { fetchBusinessModuleTree, type ModuleQueryTreeNode } from '../../api/modules/businessModule'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
 import { fetchDictionaryItems } from '../../api/modules/dictionary'
+import { fetchUsers } from '../../api/modules/security'
 import {
   getTransferApplication,
   type TransferApplicationDetailItem,
@@ -169,11 +170,7 @@ const defaultTransferFieldVisibility: Record<string, boolean> = {
   description: true
 }
 const transferFieldVisibility = ref<Record<string, boolean>>({ ...defaultTransferFieldVisibility })
-const userOptions = ref([
-  { id: 1, name: '张三' },
-  { id: 2, name: '李四' },
-  { id: 3, name: '王五' }
-])
+const userOptions = ref<Array<{ id: number; name: string }>>([])
 
 const detailRowsForView = computed(() => detailData.value?.details ?? [])
 
@@ -309,7 +306,7 @@ async function loadDetail() {
   }
   loading.value = true
   try {
-    const [detail, options, companies, moduleTree, docTypeTree, st, diff, am, ex, handover] = await Promise.all([
+    const [detail, options, companies, moduleTree, docTypeTree, st, diff, am, ex, handover, users] = await Promise.all([
       getTransferApplication(id),
       fetchArchiveCreateOptions(),
       fetchCompanyInfos({ enabledFlag: 'Y' }),
@@ -319,7 +316,8 @@ async function loadDetail() {
       fetchDictionaryItems('TRANSFER_DIFF_REASON').catch((): DictionaryItem[] => []),
       fetchDictionaryItems('TRANSFER_APPLY_METHOD').catch((): DictionaryItem[] => []),
       fetchDictionaryItems('TRANSFER_EXPRESS_TYPE').catch((): DictionaryItem[] => []),
-      fetchDictionaryItems('HANDOVER_FORM').catch((): DictionaryItem[] => [])
+      fetchDictionaryItems('HANDOVER_FORM').catch((): DictionaryItem[] => []),
+      fetchUsers().catch(() => [])
     ])
     detailData.value = detail
     companyOptions.value = companies.map((c) => ({ code: c.companyCode, name: c.companyName }))
@@ -332,6 +330,10 @@ async function loadDetail() {
     applyMethodOptions.value = toLabelOptions(am)
     expressTypeOptions.value = toLabelOptions(ex)
     handoverFormOptions.value = toLabelOptions(handover)
+    userOptions.value = (users || []).map((u: any) => ({
+      id: Number(u.userId),
+      name: `${u.userName || u.username || `用户-${u.userId}`}${u.employeeNo ? ` ${u.employeeNo}` : ''}`
+    }))
     await loadDetailExtFieldLabels(detail)
     await loadTransferFieldVisibility(detail.busiModuleCode)
   } catch (e) {

@@ -14,6 +14,8 @@ import com.smartarchive.businessmodule.mapper.BusinessModuleExtFieldMapper;
 import com.smartarchive.businessmodule.mapper.BusinessModuleMapper;
 import com.smartarchive.businessmodule.service.BusinessModuleService;
 import com.smartarchive.common.exception.BusinessException;
+import com.smartarchive.dictionary.domain.DictionaryItem;
+import com.smartarchive.dictionary.mapper.DictionaryItemMapper;
 import com.smartarchive.documenttypeconfig.domain.DocumentTypeConfig;
 import com.smartarchive.documenttypeconfig.mapper.DocumentTypeConfigMapper;
 import java.time.LocalDateTime;
@@ -36,23 +38,34 @@ import org.springframework.util.StringUtils;
 public class BusinessModuleServiceImpl implements BusinessModuleService {
     private static final Long SYSTEM_OPERATOR_ID = 1L;
     private static final int MAX_LEVEL = 6;
-    private static final List<String> SUPPORTED_APPLICATION_FUNCTIONS = List.of("应收", "移交");
-    private static final List<String> SUPPORTED_EXT_ATTRIBUTES = List.of("ATTR1", "ATTR2", "ATTR3", "ATTR4", "ATTR5", "ATTR6");
+    private static final String SECURITY_LEVEL_CATEGORY_CODE = "SECURITY_LEVEL";
+    private static final String DEFAULT_SECURITY_LEVEL_CODE = "INTERNAL_PUBLIC";
+    private static final List<String> SUPPORTED_APPLICATION_FUNCTIONS = List.of("应归档数据", "移交");
+    private static final Set<String> BASIC_TEXT_ATTRIBUTES = buildAttributePool("ATTR", 1, 40);
+    private static final Set<String> BASIC_NUMBER_ATTRIBUTES = buildAttributePool("ATTR", 41, 60);
+    private static final Set<String> BASIC_DATE_ATTRIBUTES = buildAttributePool("ATTR", 61, 80);
+    private static final Set<String> BASIC_DATETIME_ATTRIBUTES = buildAttributePool("ATTR", 81, 100);
+    private static final Set<String> ATTACHMENT_TEXT_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 1, 20);
+    private static final Set<String> ATTACHMENT_NUMBER_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 21, 30);
+    private static final Set<String> ATTACHMENT_DATE_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 31, 40);
+    private static final Set<String> ATTACHMENT_DATETIME_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 41, 50);
 
     private final BusinessModuleMapper businessModuleMapper;
     private final BusinessModuleExtFieldMapper extFieldMapper;
     private final DocumentTypeConfigMapper documentTypeConfigMapper;
+    private final DictionaryItemMapper dictionaryItemMapper;
 
     @Override
     public List<BusinessModuleNodeResponse> listTree() {
         syncDocumentTypesToBusinessModules();
+        SecurityLevelDictionarySnapshot securityLevelSnapshot = loadSecurityLevelSnapshot();
         List<BusinessModule> modules = businessModuleMapper.selectList(new LambdaQueryWrapper<BusinessModule>()
                 .eq(BusinessModule::getDeleteFlag, "N")
                 .orderByAsc(BusinessModule::getLevelNum)
                 .orderByAsc(BusinessModule::getSortOrder)
                 .orderByAsc(BusinessModule::getModuleCode));
         Map<String, BusinessModuleNodeResponse> map = modules.stream()
-                .map(this::toNode)
+                .map(module -> toNode(module, securityLevelSnapshot))
                 .collect(Collectors.toMap(BusinessModuleNodeResponse::getModuleCode, Function.identity(), (a, b) -> a));
         List<BusinessModuleNodeResponse> roots = new ArrayList<>();
         for (BusinessModule module : modules) {
@@ -80,6 +93,8 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
 
         List<DocumentTypeConfig> documentTypes = documentTypeConfigMapper.selectList(new LambdaQueryWrapper<DocumentTypeConfig>()
                 .eq(DocumentTypeConfig::getDeleteFlag, "N")
+                .isNull(DocumentTypeConfig::getParentCode)
+                .eq(DocumentTypeConfig::getLevelNum, 1)
                 .orderByAsc(DocumentTypeConfig::getDocTypeCode));
         documentTypes.forEach(type -> optionMap.putIfAbsent(type.getDocTypeCode(), toParentOption(type)));
 
@@ -99,7 +114,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         entity.setAncestorPath(meta.ancestorPath());
         entity.setEnabledFlag(normalizeFlag(command.getEnabledFlag(), "Y"));
         entity.setSortOrder(command.getSortOrder() == null ? nextSortOrder(command.getParentCode()) : command.getSortOrder());
-        entity.setSecurityLevel(normalizeSecurityLevel(command.getSecurityLevel()));
+        entity.setSecurityLevel(normalizeSecurityLevelCode(command.getSecurityLevelCode()));
         entity.setIntegrationType(normalizeIntegrationType(command.getIntegrationType()));
         entity.setDescription(trimToNull(command.getDescription()));
         entity.setRemark(trimToNull(command.getRemark()));
@@ -109,7 +124,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
         entity.setLastUpdateDate(LocalDateTime.now());
         businessModuleMapper.insert(entity);
-        return toNode(entity);
+        return toNode(entity, loadSecurityLevelSnapshot());
     }
 
     @Override
@@ -123,7 +138,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         entity.setAncestorPath(meta.ancestorPath());
         entity.setEnabledFlag(normalizeFlag(command.getEnabledFlag(), "Y"));
         entity.setSortOrder(command.getSortOrder() == null ? entity.getSortOrder() : command.getSortOrder());
-        entity.setSecurityLevel(normalizeSecurityLevel(command.getSecurityLevel()));
+        entity.setSecurityLevel(normalizeSecurityLevelCode(command.getSecurityLevelCode()));
         entity.setIntegrationType(normalizeIntegrationType(command.getIntegrationType()));
         entity.setDescription(trimToNull(command.getDescription()));
         entity.setRemark(trimToNull(command.getRemark()));
@@ -131,7 +146,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         entity.setLastUpdateDate(LocalDateTime.now());
         businessModuleMapper.updateById(entity);
         refreshDescendants(entity);
-        return toNode(requireModule(moduleCode));
+        return toNode(requireModule(moduleCode), loadSecurityLevelSnapshot());
     }
 
     @Override
@@ -246,7 +261,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
     private void applyField(BusinessModuleExtField entity, BusinessModuleExtFieldCommand command, List<String> applicationFunctions) {
         entity.setFieldScope(command.getFieldScope().trim().toUpperCase());
         entity.setApplicationFunctions(normalizeApplicationFunctions(applicationFunctions));
-        entity.setExtAttribute(normalizeExtAttribute(command.getExtAttribute()));
+        entity.setExtAttribute(normalizeExtAttribute(command.getExtAttribute(), command.getFieldScope(), command.getDataType()));
         entity.setFieldName(command.getFieldName().trim());
         entity.setEnglishFieldName(trimToNull(command.getEnglishFieldName()));
         entity.setDataType(command.getDataType().trim().toUpperCase());
@@ -342,6 +357,10 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         if (documentTypes.isEmpty()) {
             return;
         }
+        Map<String, DocumentTypeConfig> documentTypeMap = documentTypes.stream()
+                .filter(type -> StringUtils.hasText(type.getDocTypeCode()))
+                .collect(Collectors.toMap(type -> type.getDocTypeCode().trim(), Function.identity(), (a, b) -> a));
+        Set<String> docTypeCodes = new HashSet<>(documentTypeMap.keySet());
         List<BusinessModule> existingModules = businessModuleMapper.selectList(new LambdaQueryWrapper<BusinessModule>()
                 .eq(BusinessModule::getDeleteFlag, "N"));
         Map<String, BusinessModule> existingModuleMap = existingModules.stream()
@@ -356,17 +375,19 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
             if (!StringUtils.hasText(code)) {
                 continue;
             }
+            String desiredParentCode = normalizeDocumentTypeParentCode(code, documentType.getParentCode(), docTypeCodes);
+            TreeMeta desiredMeta = buildMetaFromDocumentType(code, documentTypeMap, docTypeCodes);
             BusinessModule existing = existingModuleMap.get(code);
             if (existing != null) {
-                boolean needFixRoot = code.equals(trimToNull(existing.getParentCode()))
-                        || (StringUtils.hasText(existing.getParentCode()) && !existingCodes.contains(existing.getParentCode()))
-                        || !Integer.valueOf(1).equals(existing.getLevelNum());
-                if (needFixRoot) {
+                boolean parentChanged = !java.util.Objects.equals(trimToNull(existing.getParentCode()), desiredParentCode);
+                boolean levelChanged = !java.util.Objects.equals(existing.getLevelNum(), desiredMeta.levelNum());
+                boolean ancestorChanged = !java.util.Objects.equals(trimToNull(existing.getAncestorPath()), desiredMeta.ancestorPath());
+                if (parentChanged || levelChanged || ancestorChanged) {
                     businessModuleMapper.update(null, new LambdaUpdateWrapper<BusinessModule>()
                             .eq(BusinessModule::getId, existing.getId())
-                            .set(BusinessModule::getParentCode, null)
-                            .set(BusinessModule::getLevelNum, 1)
-                            .set(BusinessModule::getAncestorPath, "")
+                            .set(BusinessModule::getParentCode, desiredParentCode)
+                            .set(BusinessModule::getLevelNum, desiredMeta.levelNum())
+                            .set(BusinessModule::getAncestorPath, desiredMeta.ancestorPath())
                             .set(BusinessModule::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
                             .set(BusinessModule::getLastUpdateDate, now));
                 }
@@ -375,15 +396,15 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
             BusinessModule entity = new BusinessModule();
             entity.setModuleCode(code);
             entity.setModuleName(StringUtils.hasText(documentType.getDocTypeDescription()) ? documentType.getDocTypeDescription().trim() : code);
-            entity.setParentCode(null);
-            entity.setLevelNum(1);
-            entity.setAncestorPath("");
+            entity.setParentCode(desiredParentCode);
+            entity.setLevelNum(desiredMeta.levelNum());
+            entity.setAncestorPath(desiredMeta.ancestorPath());
             entity.setEnabledFlag(normalizeFlag(documentType.getEnableFlag(), "Y"));
-            entity.setSecurityLevel("公开");
+            entity.setSecurityLevel(DEFAULT_SECURITY_LEVEL_CODE);
             entity.setIntegrationType("不集成");
             entity.setDescription(trimToNull(documentType.getDocTypeDescription()));
             entity.setRemark(null);
-            entity.setSortOrder(nextSortOrder++);
+            entity.setSortOrder(documentType.getSortOrder() == null ? nextSortOrder++ : documentType.getSortOrder());
             entity.setDeleteFlag("N");
             entity.setCreatedBy(SYSTEM_OPERATOR_ID);
             entity.setCreationDate(now);
@@ -392,6 +413,56 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
             businessModuleMapper.insert(entity);
             existingCodes.add(code);
         }
+    }
+
+    private TreeMeta buildMetaFromDocumentType(String code, Map<String, DocumentTypeConfig> documentTypeMap, Set<String> docTypeCodes) {
+        String parentCode = normalizeDocumentTypeParentCode(code, documentTypeMap.get(code) == null ? null : documentTypeMap.get(code).getParentCode(), docTypeCodes);
+        if (!StringUtils.hasText(parentCode)) {
+            return new TreeMeta(1, "");
+        }
+        Set<String> visited = new HashSet<>();
+        List<String> ancestors = new ArrayList<>();
+        String current = parentCode;
+        while (StringUtils.hasText(current) && visited.add(current)) {
+            DocumentTypeConfig parent = documentTypeMap.get(current);
+            if (parent == null) {
+                break;
+            }
+            String next = normalizeDocumentTypeParentCode(current, parent.getParentCode(), docTypeCodes);
+            if (!StringUtils.hasText(next)) {
+                break;
+            }
+            current = next;
+            ancestors.add(0, current);
+        }
+        ancestors.add(parentCode);
+        return new TreeMeta(ancestors.size() + 1, String.join("/", ancestors));
+    }
+
+    private String normalizeDocumentTypeParentCode(String code, String parentCode, Set<String> docTypeCodes) {
+        String normalizedParent = trimToNull(parentCode);
+        if (!StringUtils.hasText(normalizedParent) || code.equals(normalizedParent)) {
+            return null;
+        }
+        if (docTypeCodes.contains(normalizedParent)) {
+            return normalizedParent;
+        }
+        String inferred = inferParentFromCode(code, docTypeCodes);
+        return StringUtils.hasText(inferred) ? inferred : null;
+    }
+
+    private String inferParentFromCode(String code, Set<String> docTypeCodes) {
+        if (!StringUtils.hasText(code) || !code.contains("_")) {
+            return null;
+        }
+        String candidate = code;
+        while (candidate.contains("_")) {
+            candidate = candidate.substring(0, candidate.lastIndexOf('_'));
+            if (docTypeCodes.contains(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private BusinessModuleExtField requireField(String moduleCode, String fieldCode) {
@@ -446,12 +517,17 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         return normalized;
     }
 
-    private String normalizeSecurityLevel(String securityLevel) {
-        String normalized = StringUtils.hasText(securityLevel) ? securityLevel.trim() : "公开";
-        if (!List.of("公开", "秘密", "机密").contains(normalized)) {
-            throw new BusinessException("密级仅支持：公开、秘密、机密");
+    private String normalizeSecurityLevelCode(String securityLevel) {
+        SecurityLevelDictionarySnapshot snapshot = loadSecurityLevelSnapshot();
+        String normalized = StringUtils.hasText(securityLevel) ? securityLevel.trim() : DEFAULT_SECURITY_LEVEL_CODE;
+        if (snapshot.codeToName.containsKey(normalized)) {
+            return normalized;
         }
-        return normalized;
+        String resolvedCode = snapshot.nameToCode.get(normalized);
+        if (StringUtils.hasText(resolvedCode)) {
+            return resolvedCode;
+        }
+        throw new BusinessException("密级无效，请从字典管理中选择有效密级");
     }
 
     private String normalizeIntegrationType(String integrationType) {
@@ -465,7 +541,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
     private String normalizeApplicationFunctions(List<String> applicationFunctions) {
         List<String> normalized = normalizeApplicationFunctionList(applicationFunctions);
         if (normalized.isEmpty() || !SUPPORTED_APPLICATION_FUNCTIONS.containsAll(normalized)) {
-            throw new BusinessException("应用功能仅支持：应收、移交");
+            throw new BusinessException("应用功能仅支持：应归档数据、移交");
         }
         return String.join(",", normalized);
     }
@@ -477,13 +553,14 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         return applicationFunctions.stream()
                 .filter(StringUtils::hasText)
                 .map(String::trim)
+                .map(value -> "应收".equals(value) ? "应归档数据" : value)
                 .distinct()
                 .toList();
     }
 
     private String buildDerivedFieldCode(String baseFieldCode, String applicationFunction) {
         String suffix = switch (applicationFunction) {
-            case "应收" -> "AR";
+            case "应归档数据", "应收" -> "AR";
             case "移交" -> "TR";
             default -> "EXT";
         };
@@ -506,18 +583,56 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         if (!StringUtils.hasText(applicationFunctions)) {
             return List.of();
         }
-        return List.of(applicationFunctions.split(",")).stream().filter(StringUtils::hasText).map(String::trim).toList();
+        return List.of(applicationFunctions.split(",")).stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .map(value -> "应收".equals(value) ? "应归档数据" : value)
+                .distinct()
+                .toList();
     }
 
-    private String normalizeExtAttribute(String extAttribute) {
+    private String normalizeExtAttribute(String extAttribute, String fieldScope, String dataType) {
         if (!StringUtils.hasText(extAttribute)) {
             throw new BusinessException("扩展字段不能为空");
         }
         String normalized = extAttribute.trim().toUpperCase();
-        if (!SUPPORTED_EXT_ATTRIBUTES.contains(normalized)) {
-            throw new BusinessException("扩展字段仅支持：ATTR1、ATTR2、ATTR3、ATTR4、ATTR5、ATTR6");
+        Set<String> allowedAttributes = resolveAllowedAttributes(fieldScope, dataType);
+        if (!allowedAttributes.contains(normalized)) {
+            throw new BusinessException("扩展字段与字段类型不匹配，请按字段池规则选择");
         }
         return normalized;
+    }
+
+    private Set<String> resolveAllowedAttributes(String fieldScope, String dataType) {
+        String scope = StringUtils.hasText(fieldScope) ? fieldScope.trim().toUpperCase() : "";
+        String type = StringUtils.hasText(dataType) ? dataType.trim().toUpperCase() : "";
+        if ("BASIC".equals(scope)) {
+            return switch (type) {
+                case "TEXT", "DICT", "BOOLEAN" -> BASIC_TEXT_ATTRIBUTES;
+                case "NUMBER" -> BASIC_NUMBER_ATTRIBUTES;
+                case "DATE" -> BASIC_DATE_ATTRIBUTES;
+                case "DATETIME" -> BASIC_DATETIME_ATTRIBUTES;
+                default -> Set.of();
+            };
+        }
+        if ("ATTACHMENT".equals(scope)) {
+            return switch (type) {
+                case "TEXT", "DICT", "BOOLEAN" -> ATTACHMENT_TEXT_ATTRIBUTES;
+                case "NUMBER" -> ATTACHMENT_NUMBER_ATTRIBUTES;
+                case "DATE" -> ATTACHMENT_DATE_ATTRIBUTES;
+                case "DATETIME" -> ATTACHMENT_DATETIME_ATTRIBUTES;
+                default -> Set.of();
+            };
+        }
+        return Set.of();
+    }
+
+    private static Set<String> buildAttributePool(String prefix, int startInclusive, int endInclusive) {
+        Set<String> result = new HashSet<>();
+        for (int i = startInclusive; i <= endInclusive; i++) {
+            result.add(prefix + i);
+        }
+        return Set.copyOf(result);
     }
 
     private String trimToNull(String value) {
@@ -529,7 +644,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         nodes.forEach(node -> sortTree(node.getChildren()));
     }
 
-    private BusinessModuleNodeResponse toNode(BusinessModule entity) {
+    private BusinessModuleNodeResponse toNode(BusinessModule entity, SecurityLevelDictionarySnapshot snapshot) {
         BusinessModuleNodeResponse node = new BusinessModuleNodeResponse();
         node.setId(entity.getId());
         node.setModuleCode(entity.getModuleCode());
@@ -538,7 +653,11 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         node.setLevelNum(entity.getLevelNum());
         node.setAncestorPath(entity.getAncestorPath());
         node.setEnabledFlag(entity.getEnabledFlag());
-        node.setSecurityLevel(entity.getSecurityLevel());
+        String code = entity.getSecurityLevel();
+        String name = snapshot.codeToName.getOrDefault(code, code);
+        node.setSecurityLevelCode(code);
+        node.setSecurityLevelName(name);
+        node.setSecurityLevel(name);
         node.setIntegrationType(entity.getIntegrationType());
         node.setDescription(entity.getDescription());
         node.setRemark(entity.getRemark());
@@ -546,6 +665,30 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         node.setLastUpdatedBy(entity.getLastUpdatedBy());
         node.setLastUpdateDate(entity.getLastUpdateDate());
         return node;
+    }
+
+    private SecurityLevelDictionarySnapshot loadSecurityLevelSnapshot() {
+        List<DictionaryItem> items = dictionaryItemMapper.selectList(new LambdaQueryWrapper<DictionaryItem>()
+                .eq(DictionaryItem::getCategoryCode, SECURITY_LEVEL_CATEGORY_CODE)
+                .eq(DictionaryItem::getDeleteFlag, "N")
+                .eq(DictionaryItem::getEnabledFlag, "Y")
+                .orderByAsc(DictionaryItem::getSortOrder)
+                .orderByAsc(DictionaryItem::getItemCode));
+        Map<String, String> codeToName = new LinkedHashMap<>();
+        Map<String, String> nameToCode = new LinkedHashMap<>();
+        for (DictionaryItem item : items) {
+            if (!StringUtils.hasText(item.getItemCode())) {
+                continue;
+            }
+            String code = item.getItemCode().trim();
+            String name = StringUtils.hasText(item.getItemName()) ? item.getItemName().trim() : code;
+            codeToName.put(code, name);
+            nameToCode.putIfAbsent(name, code);
+        }
+        if (codeToName.isEmpty()) {
+            throw new BusinessException("未配置密级字典，请先在字典管理中维护 SECURITY_LEVEL");
+        }
+        return new SecurityLevelDictionarySnapshot(codeToName, nameToCode);
     }
 
     private BusinessModuleExtFieldResponse toFieldResponse(BusinessModuleExtField entity) {
@@ -584,4 +727,6 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
     }
 
     private record TreeMeta(Integer levelNum, String ancestorPath) {}
+
+    private record SecurityLevelDictionarySnapshot(Map<String, String> codeToName, Map<String, String> nameToCode) {}
 }

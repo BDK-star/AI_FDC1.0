@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>财经文档系统 - 销毁申请</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#1173d4",
+                        "bg-page": "#f4f6f8",
+                        "line": "#dbe2ea"
+                    },
+                    fontFamily: {
+                        display: ["Microsoft YaHei", "微软雅黑", "Inter", "sans-serif"]
+                    }
+                }
+            }
+        };
+    </script>
+    <style type="text/tailwindcss">
+        body {
+            @apply bg-bg-page text-slate-800 font-display;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
+            vertical-align: middle;
+        }
+        .field-label {
+            @apply text-sm text-slate-600 mb-1.5 block;
+        }
+        .field-input {
+            @apply w-full rounded-md border-line text-sm focus:border-primary focus:ring-primary/20;
+        }
+        .step-done {
+            @apply bg-emerald-50 text-emerald-700 border-emerald-200;
+        }
+        .step-active {
+            @apply bg-blue-50 text-primary border-primary;
+        }
+        .step-todo {
+            @apply bg-white text-slate-500 border-line;
+        }
+    </style>
+</head>
+<body>
+    <header class="h-14 bg-white border-b border-line px-6 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary">folder_managed</span>
+            <span class="font-semibold">财经文档系统</span>
+        </div>
+        <div class="text-sm text-slate-500">档案业务管理 / 销毁申请</div>
+    </header>
+
+    <main class="max-w-[1440px] mx-auto p-6">
+        <section class="bg-white border border-line rounded-lg p-5 mb-5">
+            <div class="flex items-center justify-between gap-4 flex-wrap">
+                <div class="flex items-center gap-2 text-sm">
+                    <div class="px-3 py-1 rounded-full border step-active">1 提交申请</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">2 审核申请</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">3 业务鉴定</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">4 综合鉴定</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">5 汇总清单</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">6 销毁审批</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">7 出库审批</div>
+                    <span class="text-slate-300">→</span>
+                    <div class="px-3 py-1 rounded-full border step-todo">8 实施销毁</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-4 gap-4 mt-4 text-sm">
+                <div class="bg-slate-50 p-3 rounded border border-line">申请单号：<span class="font-semibold">DT2026042700001</span></div>
+                <div class="bg-slate-50 p-3 rounded border border-line">状态：<span class="font-semibold text-primary">草稿</span></div>
+                <div class="bg-slate-50 p-3 rounded border border-line">当前处理人：<span class="font-semibold">文档管理员</span></div>
+                <div class="bg-slate-50 p-3 rounded border border-line">申请人：<span class="font-semibold">王丽（财经档案组）</span></div>
+            </div>
+        </section>
+
+        <section class="bg-white border border-line rounded-lg p-5 mb-5">
+            <h2 class="font-semibold mb-4">一、基本信息填写</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="field-label">申请标题 <span class="text-red-500">*</span></label>
+                    <input class="field-input" placeholder="请输入申请标题" />
+                </div>
+                <div>
+                    <label class="field-label">申请说明 <span class="text-red-500">*</span></label>
+                    <input class="field-input" placeholder="请输入申请说明" />
+                </div>
+                <div>
+                    <label class="field-label">销毁方式 <span class="text-red-500">*</span></label>
+                    <select id="destroyMethod" class="field-input">
+                        <option>粉碎</option>
+                        <option>焚烧</option>
+                        <option>溶解</option>
+                        <option>其他</option>
+                    </select>
+                </div>
+                <div id="destroyMethodOtherWrap" class="hidden">
+                    <label class="field-label">销毁方式-其他说明 <span class="text-red-500">*</span></label>
+                    <input class="field-input" placeholder="请输入销毁方式说明" />
+                </div>
+                <div>
+                    <label class="field-label">销毁场地 <span class="text-red-500">*</span></label>
+                    <select id="destroyLocation" class="field-input">
+                        <option>华为办公场地</option>
+                        <option>外部供应场地</option>
+                        <option>其他</option>
+                    </select>
+                </div>
+                <div id="destroyLocationOtherWrap" class="hidden">
+                    <label class="field-label">销毁场地-其他说明 <span class="text-red-500">*</span></label>
+                    <input class="field-input" placeholder="请输入销毁场地说明" />
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-white border border-line rounded-lg p-5 mb-5">
+            <h2 class="font-semibold mb-4">二、销毁计划</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border border-line">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="text-left p-3 border-b border-line">计划节点</th>
+                            <th class="text-left p-3 border-b border-line">责任人</th>
+                            <th class="text-left p-3 border-b border-line">计划时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="p-3 border-b border-line">文档实物整理</td>
+                            <td class="p-3 border-b border-line"><input class="field-input" placeholder="请选择责任人"></td>
+                            <td class="p-3 border-b border-line"><input type="datetime-local" class="field-input"></td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-line">文档实物出库</td>
+                            <td class="p-3 border-b border-line"><input class="field-input" placeholder="请选择责任人"></td>
+                            <td class="p-3 border-b border-line"><input type="datetime-local" class="field-input"></td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-line">现场实施销毁</td>
+                            <td class="p-3 border-b border-line"><input class="field-input" placeholder="请选择责任人"></td>
+                            <td class="p-3 border-b border-line"><input type="datetime-local" class="field-input"></td>
+                        </tr>
+                        <tr>
+                            <td class="p-3">销毁记录归档</td>
+                            <td class="p-3"><input class="field-input" placeholder="请选择责任人"></td>
+                            <td class="p-3"><input type="datetime-local" class="field-input"></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="bg-white border border-line rounded-lg p-5 mb-5">
+            <h2 class="font-semibold mb-4">三、销毁监督</h2>
+            <div class="grid grid-cols-4 gap-4">
+                <div>
+                    <label class="field-label">部门 <span class="text-red-500">*</span></label>
+                    <input class="field-input" placeholder="请选择部门">
+                </div>
+                <div>
+                    <label class="field-label">角色 <span class="text-red-500">*</span></label>
+                    <select class="field-input">
+                        <option>销毁申请人</option>
+                        <option>销毁监督人</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="field-label">姓名 <span class="text-red-500">*</span></label>
+                    <input class="field-input" placeholder="请选择人员">
+                </div>
+                <div>
+                    <label class="field-label">备注</label>
+                    <input class="field-input" placeholder="请输入备注">
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-white border border-line rounded-lg p-5 mb-5">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="font-semibold">四、销毁清单</h2>
+                <div class="flex gap-2">
+                    <button class="px-3 py-2 rounded border border-line text-sm bg-white hover:bg-slate-50">选择所属组织到期文档</button>
+                    <button class="px-3 py-2 rounded border border-primary text-primary text-sm bg-blue-50 hover:bg-blue-100">上传系统外文档附件</button>
+                </div>
+            </div>
+            <table class="w-full text-sm border border-line">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="text-left p-3 border-b border-line">文档编号</th>
+                        <th class="text-left p-3 border-b border-line">文档名称</th>
+                        <th class="text-left p-3 border-b border-line">所属组织</th>
+                        <th class="text-left p-3 border-b border-line">保管期限</th>
+                        <th class="text-left p-3 border-b border-line">来源</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="p-3 border-b border-line">DOC-2024-0088</td>
+                        <td class="p-3 border-b border-line">2020年供应商对账单</td>
+                        <td class="p-3 border-b border-line">财经档案组</td>
+                        <td class="p-3 border-b border-line">已到期</td>
+                        <td class="p-3 border-b border-line">系统内选择</td>
+                    </tr>
+                    <tr>
+                        <td class="p-3">EXT-ROW-0001</td>
+                        <td class="p-3">外部系统导入文档示例</td>
+                        <td class="p-3">财经共享中心</td>
+                        <td class="p-3">已到期</td>
+                        <td class="p-3">附件上传</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section class="bg-white border border-line rounded-lg p-5 mb-6">
+            <h2 class="font-semibold mb-4">五、抄送人</h2>
+            <input class="field-input" placeholder="请选择抄送人（可多选）">
+        </section>
+
+        <div class="flex justify-end gap-3 pb-10">
+            <button class="px-5 py-2.5 rounded border border-line bg-white hover:bg-slate-50 text-sm">保存草稿</button>
+            <button onclick="submitApply()" class="px-5 py-2.5 rounded bg-primary text-white hover:bg-blue-700 text-sm">提交申请</button>
+        </div>
+    </main>
+
+    <script>
+        const destroyMethod = document.getElementById("destroyMethod");
+        const destroyMethodOtherWrap = document.getElementById("destroyMethodOtherWrap");
+        const destroyLocation = document.getElementById("destroyLocation");
+        const destroyLocationOtherWrap = document.getElementById("destroyLocationOtherWrap");
+
+        function toggleConditionalField(selectEl, wrapEl) {
+            if (selectEl.value === "其他") {
+                wrapEl.classList.remove("hidden");
+            } else {
+                wrapEl.classList.add("hidden");
+            }
+        }
+
+        destroyMethod.addEventListener("change", () => toggleConditionalField(destroyMethod, destroyMethodOtherWrap));
+        destroyLocation.addEventListener("change", () => toggleConditionalField(destroyLocation, destroyLocationOtherWrap));
+
+        function submitApply() {
+            alert("原型演示：提交申请成功，状态将流转为“待审核申请”。");
+        }
+    </script>
+</body>
+</html>

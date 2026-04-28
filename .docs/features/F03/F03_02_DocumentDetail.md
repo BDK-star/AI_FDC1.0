@@ -1,6 +1,12 @@
 # F03_02 文档详情
 
-> 参考：旧规格 `1.2 规格设计-文档详情` + HTML `reference_html/pages/document_detail.html`。
+> 执行口径：仅以当前前后端代码实现为准。
+
+## 0. 背景与范围
+
+- 背景：从文档查询列表进入详情，集中查看档案主数据、附件、操作日志。
+- 范围：详情展示、附件预览/下载、操作日志查看。
+- 非范围：内部独立附件预览页（由附件接口直接返回资源流，详见 `F03_03`）。
 
 ## 1. 业务场景
 
@@ -10,27 +16,27 @@
 
 - **S-02 附件预览/下载**
   - **触发**：附件列表操作列点击“预览/下载”，或“批量下载”
-  - **系统响应**：按权限执行；预览时获取该附件的唯一标识 `EDM_ID` 并打开外部系统的对应预览页面（本系统不再提供内部“附件预览页”）
+  - **系统响应**：按权限执行；预览通过接口返回资源流，由浏览器直接打开
 
-## 2. 页面结构（与原型一致）
+## 2. 页面结构（当前页面）
 
-- **Header**：返回到文档查询 + 搜索框 + 用户信息
+- **页面头区**：业务编码标题 + 状态标签 + 条件显示“编辑”按钮
 - **面包屑**：首页 / 文档查询 / 文档详情
-- **标题区**：文档名称 + 状态标签（示例：电子归档/已生效/密级）+ 编辑按钮（是否属于F03范围待定）
+- **标题区**：业务编码 + 状态标签（载体类型/归档状态/密级）+ 编辑按钮（待归档场景显示）
 - **信息区**（折叠/展开）：
   - 文档基本信息
-  - 扩展信息（原型可折叠）
+  - 扩展信息（可折叠）
   - 归档信息
 - **附件列表区**
 - **操作日志区**
 
-## 3. 字段清单（旧规格沉淀）
+## 3. 字段清单（代码口径）
 
 > 字段命名/类型/长度以 `/.docs/01_DataModel.md` 为准。本节仅沉淀“展示字段集合与来源关系”。
 
 ### 3.1 文档基本信息
 
-旧规格字段（节选）：
+字段来源（节选）：
 
 - 文档类型：`fdc_doc_t.business_module_id -> fdc_business_module_t.document_type_id -> fdc_document_type_t.document_type_name`
 - 文档业务编码：`fdc_doc_t.doc_busi_no`
@@ -42,7 +48,7 @@
 - 责任部门：`fdc_doc_t.dept_code` → 部门查询服务
 - 载体类型：`fdc_doc_t.carrier_type` → LOOKUP `FDC_CARRIER_TYPE`
 - 系统来源：`fdc_doc_t.source_system` → LOOKUP `FDC_SOURCE_SYS`
-- 密级：旧规格提到通过业务模块关联取得（需在数据模型中明确字段/来源）
+- 密级：`securityLevelName` 或 `securityLevelCode`
 - 描述/备注：`fdc_doc_t.description`
 - 创建人/创建时间：`fdc_doc_t.created_by` / `fdc_doc_t.creation_date`（字段名以数据模型为准）
 
@@ -51,16 +57,15 @@
 - 条码模块、档案条码、册内序号、册号、册条码
 - 文档组织、库房、库位
 - 份数、剩余份数、档案类型
-- 是否可见：旧规格：`fdc_doc_t` 匹配归档流向得到 `visible_flag`
+- 是否可见：`documentVisibility` 或扩展字段回退
 
 ### 3.3 扩展信息（待定字段集合）
 
-旧规格列出：文号、发票号、会计、扫描员、其它归档号、项目/客户/交易对手、银行/币种/金额、票据相关字段等。  
-建议在实现时以“文档类型/业务模块决定扩展字段配置”为原则，避免在 `fdc_doc_t` 上无限扩列；可考虑 EXT 表或 JSON 扩展（需与 `/.docs/01_DataModel.md` 对齐）。
+扩展字段由业务模块扩展配置与 `extValues` 决定，页面按配置动态展示。
 
 ## 3. 附件列表
 
-### 4.1 列表字段（旧规格）
+### 4.1 列表字段（当前实现）
 
 - 文件名：`fdc_doc_att_t.file_name`
 - 附件类型：`fdc_doc_att_t.att_type`
@@ -71,13 +76,13 @@
 
 ### 4.2 操作与权限
 
-- **批量下载**：需要“附件下载”权限；无权限则按钮不可见或置灰（旧规格：不可见）
+- **批量下载**：需要“附件下载”权限；无权限则按钮不可用。
 - **预览**：需要“附件预览”权限；无权限则置灰
 - **下载**：需要“附件下载”权限；无权限则置灰
 
 ## 4. 操作日志
 
-### 5.1 字段（旧规格）
+### 5.1 字段（当前实现）
 
 - 操作人：`fdc_doc_op_log_t.operated_by`
 - 操作类型：`fdc_doc_op_log_t.operation_type`
@@ -116,7 +121,7 @@
     - 下载/预览失败给出错误提示。
   - **产出**：预览内容或下载结果。
 
-### 5.2 页面/交互/原型说明（UI/UX）
+### 5.2 页面/交互说明（UI/UX）
 
 #### 5.2.1 页面一览（本功能涉及的全部页面）
 | 页面编号 | 页面名称 | 路由/入口（或菜单路径） | 页面类型 | 简述 | 详述 |
@@ -136,9 +141,9 @@
   - **L4** 信息展示区：包含多个可折叠的信息模块（基本信息/扩展信息/归档信息）
   - **L5** 附件列表区：显示文档附件信息
   - **L6** 操作日志区：显示文档操作历史记录
-- **原型与设计**：`reference_html/pages/document_detail.html`
+- **页面实现**：`frontend/src/views/archive-management/ArchiveDetailView.vue`
 
-###### （2）分区 → 模块拆解（按 old_spec 逐行对齐字段与按钮）
+###### （2）分区 → 模块拆解（按当前页面实现逐行对齐字段与按钮）
 
 **〔L2 面包屑导航区〕— 模块 M0：页面路径（精简版）**
 |元素名称|字段名-英文|类型|链接逻辑|
@@ -284,7 +289,7 @@
 |1|下拉|/|操作日志列表标题栏-右上1|展示|||
 |2|补充附件下载|链接|操作日志列表补充附件列|点击补充附件名，调用补充附件下载api，点击后|||
 
-### 页面API设计（前端交互类必选）（来自 old_spec）
+### 页面API设计（前端交互类必选，来自当前实现）
 | 序号 | 页面名称 | API 名称 | 使用位置 |
 |---:|---|---|---|
 | 1 | 文档详情 | 文档详情（整体） | 整体 |
@@ -313,25 +318,39 @@
 - 附件列表：调用“单个附件预览/单个附件下载/附件批量下载”API。
 - 操作日志补充附件下载：点击补充附件名调用“补充附件下载”API。
 
-## 6. 接口规范（API Specs）
+## 6. 接口规范（API Specs，代码对齐）
 
 > 遵循 `/.docs/05_API_Conventions.md`。附件与操作日志采用**扁平资源** `document-attachments`、`document-operation-logs`，避免 `/documents/{id}/attachments/...` 深层嵌套。`{id}` 为数值型主键。
 
 | 资源路径 | 方法 | 用途 | 备注 |
 |---|---|---|---|
-| `FDC_URL/documents/{id}` | GET | 文档详情 | 可将附件列表、操作日志嵌套在同一响应中以减少请求次数 |
-| `FDC_URL/document-attachments/page` | GET | 附件列表（简单筛选 + 分页） | Query：`filter.documentId`、`pageNumber`、`pageSize` |
-| `FDC_URL/document-attachments/search-page` | POST | 附件列表（复杂筛选 + 分页） | 请求体：`DocumentAttachmentPaginationQuery`，含 `filter.documentId` |
-| `FDC_URL/document-attachments/{id}/preview` | GET | 单个附件预览 | 返回外部系统预览入口（URL 或重定向），后端已完成 `EDM_ID` 解析与传递；前端据此打开 |
-| `FDC_URL/document-attachments/{id}/download` | GET | 单个附件下载 | |
-| `FDC_URL/document-attachments/export` | POST | 附件批量下载/打包导出 | 请求体：`documentId`、`attachmentIds` 等；可生成异步任务，与 `export-tasks` 对齐 |
-| `FDC_URL/document-operation-logs/search-page` | POST | 操作日志列表 | 请求体含 `filter.documentId` |
-| `FDC_URL/document-operation-log-attachments/{id}/download` | GET | 操作日志补充附件下载 | |
+| `FDC_URL/api/archive-management/archives/{archiveId}` | GET | 文档详情 | `ArchiveManagementController.getArchiveDetail` |
+| `FDC_URL/api/archive-management/attachments/{attachmentId}/preview` | GET | 单个附件预览 | 直接返回资源流 |
+| `FDC_URL/api/archive-management/attachments/{attachmentId}/download` | GET | 单个附件下载 | 二进制下载 |
+| `FDC_URL/api/archive-management/archives/{archiveId}/attachments/download-all` | GET | 附件批量下载 | ZIP 下载 |
+| `FDC_URL/api/common/audits/page` | POST | 操作日志查询 | 详情页日志建议复用审计接口 |
 
 ## 7. 验收标准（AC）
 
 - **AC-01**：从列表进入详情后，标题区展示文档名称与状态标签；面包屑可返回文档查询。  
 - **AC-02**：附件列表显示文件名/类型/大小/上传时间；无权限时预览/下载行为按权限受控。  
-- **AC-03**：点击“预览”后打开外部系统对应附件预览入口；预览由外部系统渲染，本系统不再设计内部附件预览页。  
+- **AC-03**：点击“预览”后可打开附件内容资源；无权限时预览不可用。  
 - **AC-04**：操作日志展示操作人/类型/内容/时间；存在补充附件时可按权限下载。  
+
+## 8. 权限与安全（补充）
+
+- 详情读取、附件预览、附件下载都需校验数据范围权限。
+- 审计日志查询需校验可见范围，不可跨组织查看。
+
+## 9. 测试计划（补充）
+
+| 用例ID | 场景 | 期望结果 |
+|---|---|---|
+| TC-DD-01 | 从列表进入详情 | 详情加载成功，关键模块展示完整 |
+| TC-DD-02 | 预览/下载权限校验 | 有权限可执行，无权限拦截 |
+| TC-DD-03 | 附件批量下载 | 返回 zip 且文件完整 |
+
+## 10. 冲突点说明
+
+- 历史文档中“外部 EDM 预览入口”描述与当前后端实现不一致，本文已统一为“流式资源预览”。
 

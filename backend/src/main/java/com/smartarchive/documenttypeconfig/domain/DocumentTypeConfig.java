@@ -13,6 +13,10 @@ public class DocumentTypeConfig {
     private Long documentTypeId;
     private String docTypeCode;
     private String docTypeDescription;
+    private String parentCode;
+    private Integer levelNum;
+    private String ancestorPath;
+    private Integer sortOrder;
     private String enableFlag;
     private String deleteFlag;
     private Long createdBy;

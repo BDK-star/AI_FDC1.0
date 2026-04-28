@@ -11,26 +11,35 @@
             <span>用户列表</span>
           </div>
         </template>
-        <el-table 
-          :data="users" 
-          highlight-current-row 
+        <el-table
+          :data="users"
+          row-key="userId"
+          highlight-current-row
           @current-change="handleUserSelect"
           v-loading="loadingUsers"
         >
-          <el-table-column prop="username" label="用户名" min-width="100" />
-          <el-table-column prop="realName" label="姓名" min-width="100" />
+          <el-table-column label="用户名(拼音)" min-width="120">
+            <template #default="{ row }">
+              {{ row.userName ?? row.username ?? '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="工号" min-width="100">
+            <template #default="{ row }">
+              {{ row.employeeNo ?? '—' }}
+            </template>
+          </el-table-column>
         </el-table>
       </el-card>
 
       <!-- 角色配置卡片 -->
-      <el-card class="role-config-card" shadow="never" v-loading="loadingConfig">
+      <el-card class="role-config-card" shadow="never" v-loading="loadingConfig || loadingRoleData">
         <template #header>
           <div class="card-header">
             <div class="header-left">
               <span class="btn-icon">manage_accounts</span>
               <span>角色与维度配置</span>
               <el-tag v-if="selectedUser" type="success" effect="plain" class="ml-2">
-                当前用户: {{ selectedUser.realName }} ({{ selectedUser.username }})
+                当前用户: {{ selectedUser.userName ?? selectedUser.username ?? '—' }}<template v-if="selectedUser.employeeNo"> · 工号 {{ selectedUser.employeeNo }}</template>
               </el-tag>
             </div>
             <div class="header-actions">
@@ -154,26 +163,35 @@ const roleScopes = ref<Record<string, Record<string, string[]>>>({})
 
 const loadingUsers = ref(false)
 const loadingConfig = ref(false)
+const loadingRoleData = ref(false)
 const activeTab = ref('roles')
 
 onMounted(async () => {
   loadingUsers.value = true
   try {
-    const [userRes, roleRes, entityRes, moduleRes] = await Promise.all([
-      fetchUsers(),
+    users.value = await fetchUsers()
+  } catch (err) {
+    console.error(err)
+    ElMessage.error('加载用户列表失败，请确认后端已启动且接口 /api/security/user-roles/users 可用')
+  } finally {
+    loadingUsers.value = false
+  }
+
+  loadingRoleData.value = true
+  try {
+    const [roleRes, entityRes, moduleRes] = await Promise.all([
       fetchRoles(),
       fetchDocumentOrganizations({}),
       fetchDocumentTypeTree()
     ])
-    users.value = userRes
     allRoles.value = roleRes
     allEntities.value = entityRes
     moduleTree.value = moduleRes
   } catch (err) {
     console.error(err)
-    ElMessage.error('加载基础数据失败')
+    ElMessage.error('加载角色或维度数据失败（用户列表已单独加载）')
   } finally {
-    loadingUsers.value = false
+    loadingRoleData.value = false
   }
 })
 

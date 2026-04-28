@@ -35,6 +35,7 @@
               class="f02-control"
               node-key="moduleCode"
               :props="{ value: 'moduleCode', label: 'queryLabel', children: 'children' }"
+              @update:model-value="handleArchiveTypeChange"
             />
           </div>
           <div class="f02-field">
@@ -120,15 +121,14 @@
               class="f02-control"
             />
           </div>
-        </div>
-
-        <div v-if="queryFields.length" class="query-extra">
-          <div class="query-extra__title">扩展字段</div>
-          <div class="f02-filter-grid">
-            <div v-for="field in queryFields" :key="field.fieldCode" class="f02-field">
-              <label>{{ field.fieldName }}</label>
-              <el-input v-model="queryExtFilters[field.fieldCode]" clearable class="f02-control" />
-            </div>
+          <div v-for="field in moduleExtFilterFields" :key="`ext-${field.fieldCode}`" class="f02-field">
+            <label>{{ field.fieldName }}</label>
+            <el-input
+              v-model="queryExtFilters[field.fieldCode]"
+              clearable
+              placeholder="请输入"
+              class="f02-control"
+            />
           </div>
         </div>
 
@@ -210,14 +210,44 @@
       @confirm="handleImportQueryModalConfirm"
     />
 
-    <el-dialog v-model="columnSettingVisible" title="列设置" width="500px">
-      <el-checkbox-group v-model="selectedColumnKeys" class="column-checks">
-        <el-checkbox v-for="col in allColumns" :key="col.prop" :label="col.prop" :disabled="col.prop === 'businessCode'">
-          {{ col.label }}{{ col.prop === 'businessCode' ? '（必选）' : '' }}
-        </el-checkbox>
-      </el-checkbox-group>
+    <el-dialog
+      v-model="columnSettingVisible"
+      width="760px"
+      class="f02-column-setting-dialog"
+      :show-close="false"
+      align-center
+      append-to-body
+    >
+      <template #header>
+        <div class="f02-column-setting-dialog__header">
+          <h3>字段选择</h3>
+          <el-button link @click="columnSettingVisible = false">✕</el-button>
+        </div>
+      </template>
+      <div class="f02-column-setting-dialog__body">
+        <el-input
+          v-model="columnSearchKeyword"
+          :prefix-icon="Search"
+          placeholder="搜索字段名称"
+          clearable
+          class="f02-column-setting-dialog__search"
+        />
+        <el-checkbox-group v-model="columnDraftKeys" class="f02-column-setting-dialog__grid">
+          <el-checkbox
+            v-for="col in filteredColumnOptions"
+            :key="col.prop"
+            :label="col.prop"
+            :disabled="col.prop === 'businessCode'"
+          >
+            {{ col.label }}
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
       <template #footer>
-        <el-button @click="columnSettingVisible = false">关闭</el-button>
+        <div class="f02-column-setting-dialog__footer">
+          <el-button @click="resetColumnDraftSelection">重置</el-button>
+          <el-button type="primary" @click="confirmColumnDraftSelection">确定</el-button>
+        </div>
       </template>
     </el-dialog>
 
@@ -241,10 +271,20 @@ import { ArrowDown, ArrowUp, FullScreen, RefreshRight, Search, Setting, WarningF
 import { ElMessage } from 'element-plus'
 import { onActivated, onMounted, reactive, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { createPendingDocumentsExportJob, fetchArchiveCreateOptions, fetchEffectiveDocumentTypeExtFields, queryArchives, submitArchiveImportQueryJob, type ArchiveQueryCommand } from '../../api/modules/archiveManagement'
-import { buildModuleQueryTree, fetchBusinessModuleTree, type ModuleQueryTreeNode } from '../../api/modules/businessModule'
+import { createPendingDocumentsExportJob, fetchArchiveCreateOptions, queryArchives, submitArchiveImportQueryJob, type ArchiveQueryCommand } from '../../api/modules/archiveManagement'
+import {
+  buildModuleQueryTree,
+  fetchBusinessModuleExtFields,
+  fetchBusinessModuleTree,
+  filterBusinessModuleTreeByDocumentType,
+  isModuleCodeWithinDocumentType,
+  resolveRootDocumentTypeCodeByModule,
+  type ModuleQueryTreeNode
+} from '../../api/modules/businessModule'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
-import type { ArchiveCreateOptions, ArchiveQueryResult, BusinessModuleNode, DocumentTypeExtField } from '../../types'
+import { fetchUsers } from '../../api/modules/security'
+import type { ArchiveCreateOptions, ArchiveQueryResult, BusinessModuleExtField, BusinessModuleNode } from '../../types'
+import type { User } from '../../api/modules/security'
 import { validateMultiValueInput } from '../../utils/multiValueQuery'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import F03BatchImportModal from '../../components/f03/F03BatchImportModal.vue'
@@ -292,6 +332,11 @@ const query = reactive<ArchiveQueryCommandWithPage>({
 })
 
 const companySelectOptions = ref<Array<{ code: string; name: string }>>([])
+const userSelectOptions = ref<Array<{ label: string; value: string }>>([])
+const userDisplayById = computed<Record<string, string>>(() =>
+  Object.fromEntries(userSelectOptions.value.map((item) => [item.value, item.label]))
+)
+const businessModuleSourceTree = ref<BusinessModuleNode[]>([])
 const businessModuleTreeOptions = ref<ModuleQueryTreeNode[]>([])
 const docTypeReady = computed(() => Boolean(query.documentTypeCode && query.documentTypeCode.trim()))
 const selectedDocTypeName = computed(() => {
@@ -320,23 +365,23 @@ const advancedFilters = reactive<Record<string, any>>({
   barcodeModule: '',
   archiveBarcodeRange: '',
   verificationDateRange: null,
-  verifiedBy: '',
+  verifiedBy: [] as string[],
   volumeSeqNo: '',
   volumeBarcodeRange: '',
   volumizationDateRange: null,
-  assembledBy: '',
+  assembledBy: [] as string[],
   volumeNoRange: '',
   repository: '',
   storageLocationRange: '',
   storageDateRange: null,
-  storedBy: '',
+  storedBy: [] as string[],
   copies: '',
   remainingCopies: '',
   archiveType: '',
   invoiceNo: '',
   refNo: '',
-  accountant: '',
-  scannedBy: '',
+  accountant: [] as string[],
+  scannedBy: [] as string[],
   issueDateRange: null,
   maturityDateRange: null,
   lgExpiryDateRange: null,
@@ -351,17 +396,24 @@ const advancedFilters = reactive<Record<string, any>>({
   lgNo: ''
 })
 
-const visibleMoreFilterFields = computed(() => getVisibleMoreFilterFields(archiveQueryPageConfig.moreFilterFields, selectedDocTypeName.value))
+const visibleMoreFilterFields = computed(() =>
+  getVisibleMoreFilterFields(archiveQueryPageConfig.moreFilterFields, selectedDocTypeName.value)
+)
 const moreFieldOptionsMap = computed<Record<string, Array<{ label: string; value: string }>>>(() => ({
   country: options.geoCountries.map((item) => ({ label: item.name, value: item.code })),
   repOffice: options.geoRepOffices.map((item) => ({ label: item.name, value: item.name })),
   region: options.geoRegions.map((item) => ({ label: item.name, value: item.name })),
   custodyStatus: options.custodyStatuses.map((item) => ({ label: item.name, value: item.code })),
   securityLevelCode: options.securityLevels.map((item) => ({ label: item.name, value: item.code })),
-  sourceSystem: []
+  sourceSystem: [],
+  verifiedBy: userSelectOptions.value,
+  assembledBy: userSelectOptions.value,
+  storedBy: userSelectOptions.value,
+  accountant: userSelectOptions.value,
+  scannedBy: userSelectOptions.value
 }))
 
-const queryFields = ref<DocumentTypeExtField[]>([])
+const moduleExtFilterFields = ref<BusinessModuleExtField[]>([])
 const queryExtFilters = reactive<Record<string, string>>({})
 const queryResult = reactive<ArchiveQueryResult>({ records: [], queryFields: [], total: 0, page: 1, pageSize: 20 })
 const pageSizeOptions = [20, 50, 100, 500, 1000]
@@ -371,6 +423,8 @@ const tableFullPage = ref(false)
 const allColumns = ref(archiveQueryPageConfig.columns)
 const selectedColumnKeys = ref([...archiveQueryPageConfig.defaultVisibleColumns])
 const columnSettingVisible = ref(false)
+const columnSearchKeyword = ref('')
+const columnDraftKeys = ref<string[]>([...archiveQueryPageConfig.defaultVisibleColumns])
 const importQueryDialogVisible = ref(false)
 const importing = ref(false)
 const exportSuccessVisible = ref(false)
@@ -385,6 +439,14 @@ const importQueryDownloadFileName = computed(() => {
 
 const visibleColumns = computed(() => {
   return allColumns.value.filter(column => selectedColumnKeys.value.includes(column.prop))
+})
+const filteredColumnOptions = computed(() => {
+  const keyword = columnSearchKeyword.value.trim().toLowerCase()
+  if (!keyword) return allColumns.value
+  return allColumns.value.filter((col) =>
+    String(col.label || '').toLowerCase().includes(keyword) ||
+    String(col.prop || '').toLowerCase().includes(keyword)
+  )
 })
 
 const formatDateTime = (value: unknown) => {
@@ -401,31 +463,107 @@ const formatDateTime = (value: unknown) => {
 const isDateTimeColumn = (prop: string) => ['documentDate', 'creationDate', 'lastUpdateDate'].includes(prop)
 
 const loadOptions = async () => {
-  const [result, companies, moduleTree] = await Promise.all([
+  const [result, companies, moduleTree, users] = await Promise.all([
     fetchArchiveCreateOptions(),
     fetchCompanyInfos({ enabledFlag: 'Y' }),
-    fetchBusinessModuleTree().catch((): BusinessModuleNode[] => [])
+    fetchBusinessModuleTree().catch((): BusinessModuleNode[] => []),
+    fetchUsers().catch((): User[] => [])
   ])
   Object.assign(options, result)
   companySelectOptions.value = companies.map((c) => ({ code: c.companyCode, name: c.companyName }))
-  businessModuleTreeOptions.value = buildModuleQueryTree(moduleTree)
+  userSelectOptions.value = users
+    .map((u) => {
+      const userId = Number(u.userId)
+      if (!Number.isFinite(userId) || userId <= 0) return null
+      const userName = String(u.userName || u.username || `用户-${userId}`).trim()
+      const display = u.employeeNo ? `${userName} ${u.employeeNo}` : userName
+      return { label: display, value: String(userId) }
+    })
+    .filter((item): item is { label: string; value: string } => Boolean(item))
+  businessModuleSourceTree.value = moduleTree
+  syncBusinessModuleOptionsByDocumentType(query.documentTypeCode)
   console.log('Document organizations:', options.documentOrganizations)
+}
+
+const syncBusinessModuleOptionsByDocumentType = (documentTypeCode?: string) => {
+  const filtered = filterBusinessModuleTreeByDocumentType(
+    businessModuleSourceTree.value,
+    documentTypeCode || ''
+  )
+  businessModuleTreeOptions.value = buildModuleQueryTree(filtered)
+  if (
+    query.archiveTypeCode &&
+    !isModuleCodeWithinDocumentType(
+      businessModuleSourceTree.value,
+      documentTypeCode || '',
+      query.archiveTypeCode
+    )
+  ) {
+    query.archiveTypeCode = ''
+  }
 }
 
 const handleQueryTypeChange = async (typeCode?: string) => {
   layout.setDocumentTypeCode(typeCode || '')
-  query.archiveTypeCode = ''
-  if (typeCode?.trim()) {
-    try {
-      queryFields.value = (await fetchEffectiveDocumentTypeExtFields(typeCode)).filter((item) => item.queryEnabledFlag === 'Y')
-    } catch (e: any) {
-      queryFields.value = []
-      ElMessage.error(e?.message || '加载扩展查询字段失败')
-    }
-  } else {
-    queryFields.value = []
-  }
+  syncBusinessModuleOptionsByDocumentType(typeCode)
+  moduleExtFilterFields.value = []
   Object.keys(queryExtFilters).forEach(key => delete queryExtFilters[key])
+}
+
+const handleArchiveTypeChange = async (next?: string) => {
+  const moduleCode = String(next || '').trim()
+  if (!moduleCode) {
+    moduleExtFilterFields.value = []
+    Object.keys(queryExtFilters).forEach(key => delete queryExtFilters[key])
+    return
+  }
+  if (query.documentTypeCode?.trim()) {
+    if (
+      !isModuleCodeWithinDocumentType(
+        businessModuleSourceTree.value,
+        query.documentTypeCode,
+        moduleCode
+      )
+    ) {
+      const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+      if (rootDocType) {
+        query.documentTypeCode = rootDocType
+        await handleQueryTypeChange(rootDocType)
+      } else {
+        query.archiveTypeCode = ''
+      }
+    }
+    await loadModuleExtFilterFields(moduleCode)
+    return
+  }
+  const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+  if (!rootDocType) return
+  query.documentTypeCode = rootDocType
+  await handleQueryTypeChange(rootDocType)
+  await loadModuleExtFilterFields(moduleCode)
+}
+
+const loadModuleExtFilterFields = async (moduleCode: string) => {
+  const code = String(moduleCode || '').trim()
+  if (!code) {
+    moduleExtFilterFields.value = []
+    return
+  }
+  try {
+    const [basic, attachment] = await Promise.all([
+      fetchBusinessModuleExtFields(code, 'BASIC'),
+      fetchBusinessModuleExtFields(code, 'ATTACHMENT')
+    ])
+    const merged = [...basic, ...attachment]
+      .filter((item) => item.enabledFlag === 'Y' && item.queryFlag === 'Y')
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    const unique = new Map<string, BusinessModuleExtField>()
+    merged.forEach((item) => unique.set(item.fieldCode, item))
+    moduleExtFilterFields.value = Array.from(unique.values())
+  } catch (e: any) {
+    moduleExtFilterFields.value = []
+    ElMessage.error(e?.message || '加载业务模块扩展筛选字段失败')
+  }
 }
 
 const buildStringExtFilters = () => {
@@ -489,7 +627,6 @@ const runQuery = async () => {
     queryResult.total = result.total
     queryResult.page = result.page
     queryResult.pageSize = result.pageSize
-    queryFields.value = result.queryFields
     if (!result.records?.length) {
       ElMessage.info('未查询到匹配数据，请调整筛选条件后重试')
     }
@@ -543,23 +680,23 @@ const resetFilters = async () => {
     barcodeModule: '',
     archiveBarcodeRange: '',
     verificationDateRange: null,
-    verifiedBy: '',
+    verifiedBy: [],
     volumeSeqNo: '',
     volumeBarcodeRange: '',
     volumizationDateRange: null,
-    assembledBy: '',
+    assembledBy: [],
     volumeNoRange: '',
     repository: '',
     storageLocationRange: '',
     storageDateRange: null,
-    storedBy: '',
+    storedBy: [],
     copies: '',
     remainingCopies: '',
     archiveType: [],
     invoiceNo: '',
     refNo: '',
-    accountant: '',
-    scannedBy: '',
+    accountant: [],
+    scannedBy: [],
     issueDateRange: null,
     maturityDateRange: null,
     lgExpiryDateRange: null,
@@ -578,7 +715,8 @@ const resetFilters = async () => {
     dutyPerson: ''
   })
   Object.keys(queryExtFilters).forEach(key => delete queryExtFilters[key])
-  queryFields.value = []
+  moduleExtFilterFields.value = []
+  syncBusinessModuleOptionsByDocumentType('')
   queryResult.records = []
   queryResult.queryFields = []
   queryResult.total = 0
@@ -623,7 +761,18 @@ const handleSelectionChange = (selection: any[]) => {
 }
 
 const handleColumnSettingClick = () => {
+  columnSearchKeyword.value = ''
+  columnDraftKeys.value = [...selectedColumnKeys.value]
   columnSettingVisible.value = true
+}
+const resetColumnDraftSelection = () => {
+  columnDraftKeys.value = [...archiveQueryPageConfig.defaultVisibleColumns]
+}
+const confirmColumnDraftSelection = () => {
+  const next = [...columnDraftKeys.value]
+  if (!next.includes('businessCode')) next.push('businessCode')
+  selectedColumnKeys.value = next
+  columnSettingVisible.value = false
 }
 
 const toCsv = (data: any[]) => {
@@ -711,7 +860,20 @@ const buildDetailExportSchema = (records: any[]): DetailExportColumn[] => {
 
 const resolveDetailExportValue = (row: any, prop: string) => {
   const ext = (row?.extValues || {}) as Record<string, string>
-  if (prop.startsWith('ext.')) return ext[prop.slice(4)] ?? ''
+  if (prop.startsWith('ext.')) {
+    const extKey = prop.slice(4)
+    const raw = ext[extKey] ?? ''
+    if (['accountant', 'scannedBy'].includes(extKey)) {
+      const normalized = String(raw || '').trim()
+      if (!normalized) return ''
+      return (
+        userDisplayById.value[normalized] ||
+        (normalized.endsWith('.0') ? userDisplayById.value[normalized.slice(0, -2)] : undefined) ||
+        raw
+      )
+    }
+    return raw
+  }
   if (prop === 'documentDate' || prop === 'lastUpdateDate') return formatDateTimeForExport(row?.[prop])
   if (prop === 'securityLevelName') return row?.securityLevelName || row?.securityLevelCode || ''
   if (prop === 'companyProjectName') return row?.companyProjectName || row?.companyProjectCode || ''
@@ -1001,10 +1163,55 @@ const goMyExports = () => {
   padding-top: 0;
   border-top: 0;
 }
-.column-checks {
+.f02-column-setting-dialog :deep(.el-dialog__header) {
+  padding: 14px 20px;
+  border-bottom: 1px solid #e6ebf2;
+}
+.f02-column-setting-dialog :deep(.el-dialog) {
+  max-width: calc(100vw - 32px);
+}
+.f02-column-setting-dialog :deep(.el-dialog__body) {
+  padding: 0;
+}
+.f02-column-setting-dialog :deep(.el-dialog__footer) {
+  padding: 10px 20px 14px;
+  border-top: 1px solid #e6ebf2;
+}
+.f02-column-setting-dialog__header {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+.f02-column-setting-dialog__header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+}
+.f02-column-setting-dialog__body {
+  padding: 12px 20px 6px;
+}
+.f02-column-setting-dialog__search {
+  margin-bottom: 10px;
+}
+.f02-column-setting-dialog__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 20px;
+  max-height: 360px;
+  overflow: auto;
+}
+.f02-column-setting-dialog__grid :deep(.el-checkbox) {
+  margin-right: 0;
+  font-size: 18px;
+}
+.f02-column-setting-dialog__grid :deep(.el-checkbox__label) {
+  font-size: 18px;
+}
+.f02-column-setting-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 .el-table {
   width: 100%;

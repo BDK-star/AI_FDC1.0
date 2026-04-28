@@ -42,10 +42,12 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -53,6 +55,7 @@ import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -75,6 +78,7 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
     private final BusinessModuleMapper businessModuleMapper;
     private final WorkflowService workflowService;
     private final WorkflowInstanceMapper workflowInstanceMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public List<TransferApplicationResponse> list(Long tenantid) {
@@ -202,8 +206,9 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
                         (left, right) -> left
                     ));
             }));
+        Map<Long, String> userDisplayMap = loadUserDisplayMapForRecordRows(rows);
         List<TransferApplicationRecordRowResponse> records = rows.stream()
-            .map(item -> toRecordRow(item, busiModuleNameMap))
+            .map(item -> toRecordRow(item, busiModuleNameMap, userDisplayMap))
             .toList();
         return TransferApplicationRecordPageResponse.builder()
             .records(records)
@@ -246,7 +251,9 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
         throw new BusinessException("archPeriod must be yyyy-MM");
     }
 
-    private TransferApplicationRecordRowResponse toRecordRow(TransferApplication item, Map<String, String> busiModuleNameMap) {
+    private TransferApplicationRecordRowResponse toRecordRow(TransferApplication item,
+                                                             Map<String, String> busiModuleNameMap,
+                                                             Map<Long, String> userDisplayMap) {
         String busiModuleCode = item.getBusiModuleCode();
         String busiModuleName = StringUtils.hasText(busiModuleCode)
             ? busiModuleNameMap.getOrDefault(busiModuleCode, busiModuleCode)
@@ -257,21 +264,61 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
             .busiModuleCode(busiModuleCode)
             .busiModuleName(busiModuleName)
             .applicant(item.getApplicant())
-            .applicantName(formatUserDisplay(item.getApplicant()))
+            .applicantName(formatUserDisplay(item.getApplicant(), userDisplayMap))
             .applicationDate(item.getApplicationDate())
             .applicationStatus(item.getApplicationStatus())
             .documentRecipient(item.getDocumentRecipient())
-            .documentRecipientName(formatUserDisplay(item.getDocumentRecipient()))
+            .documentRecipientName(formatUserDisplay(item.getDocumentRecipient(), userDisplayMap))
             .expressType(item.getExpressType())
             .expressNumber(item.getExpressNumber())
             .build();
     }
 
-    private String formatUserDisplay(Long userId) {
+    private String formatUserDisplay(Long userId, Map<Long, String> userDisplayMap) {
         if (userId == null) {
             return "-";
         }
-        return "用户-" + userId;
+        return userDisplayMap.getOrDefault(userId, "用户-" + userId);
+    }
+
+    private Map<Long, String> loadUserDisplayMapForRecordRows(List<TransferApplication> rows) {
+        Set<Long> ids = new HashSet<>();
+        for (TransferApplication row : rows) {
+            if (row.getApplicant() != null && row.getApplicant() > 0) {
+                ids.add(row.getApplicant());
+            }
+            if (row.getDocumentRecipient() != null && row.getDocumentRecipient() > 0) {
+                ids.add(row.getDocumentRecipient());
+            }
+        }
+        return loadUserDisplayMap(ids);
+    }
+
+    private Map<Long, String> loadUserDisplayMap(Set<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return Map.of();
+        }
+        String placeholders = String.join(",", userIds.stream().map(id -> "?").toList());
+        List<Object> params = new ArrayList<>(userIds);
+        return jdbcTemplate.query(
+            """
+            select user_id,
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(user_name, ''), nullif(employee_no, ''))), ''),
+                     cast(user_id as varchar)
+                   ) as user_display
+              from tpl_user_t
+             where delete_flag = 'N'
+               and user_id in (""" + placeholders + ")",
+            rs -> {
+                Map<Long, String> out = new LinkedHashMap<>();
+                while (rs.next()) {
+                    out.put(rs.getLong("user_id"), rs.getString("user_display"));
+                }
+                return out;
+            },
+            params.toArray()
+        );
     }
 
     @Override
@@ -634,10 +681,15 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
     }
 
     private TransferApplicationResponse toResponse(TransferApplication item, List<TransferApplicationDetailResponse> details) {
+        Set<Long> ids = new HashSet<>();
+        if (item.getApplicant() != null && item.getApplicant() > 0) ids.add(item.getApplicant());
+        if (item.getDocumentRecipient() != null && item.getDocumentRecipient() > 0) ids.add(item.getDocumentRecipient());
+        Map<Long, String> userDisplayMap = loadUserDisplayMap(ids);
         return TransferApplicationResponse.builder()
             .applicationId(item.getApplicationId())
             .applicationNumber(item.getApplicationNumber())
             .applicant(item.getApplicant())
+            .applicantName(formatUserDisplay(item.getApplicant(), userDisplayMap))
             .applicationDate(item.getApplicationDate())
             .department(item.getDepartment())
             .busiModuleCode(item.getBusiModuleCode())
@@ -645,6 +697,7 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
             .expressType(item.getExpressType())
             .expressNumber(item.getExpressNumber())
             .documentRecipient(item.getDocumentRecipient())
+            .documentRecipientName(formatUserDisplay(item.getDocumentRecipient(), userDisplayMap))
             .handoverForm(item.getHandoverForm())
             .carrierType(item.getCarrierType())
             .applicationStatus(item.getApplicationStatus())
@@ -763,10 +816,14 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
         Map<String, Object> variables = new LinkedHashMap<>();
         variables.put("assigneeId", String.valueOf(application.getDocumentRecipient()));
         variables.put("applicationId", application.getApplicationId());
-        variables.put("assigneeName", "");
+        Set<Long> ids = new HashSet<>();
+        if (application.getDocumentRecipient() != null && application.getDocumentRecipient() > 0) ids.add(application.getDocumentRecipient());
         Long applicant = application.getApplicant() != null ? application.getApplicant() : SYSTEM_OPERATOR_ID;
+        if (applicant > 0) ids.add(applicant);
+        Map<Long, String> userDisplayMap = loadUserDisplayMap(ids);
+        variables.put("assigneeName", formatUserDisplay(application.getDocumentRecipient(), userDisplayMap));
         variables.put("initiatorId", String.valueOf(applicant));
-        variables.put("initiatorName", "用户-" + applicant);
+        variables.put("initiatorName", formatUserDisplay(applicant, userDisplayMap));
         variables.put("applicationNumber", application.getApplicationNumber());
         variables.put("transferMode", "TRANSFER_APPLICATION");
 
@@ -776,7 +833,7 @@ public class TransferApplicationServiceImpl implements TransferApplicationServic
         start.setBusinessType("TRANSFER_APPLICATION");
         start.setBusinessId(application.getApplicationId());
         start.setInitiatorId(String.valueOf(applicant));
-        start.setInitiatorName("用户-" + applicant);
+        start.setInitiatorName(formatUserDisplay(applicant, userDisplayMap));
         start.setVariables(variables);
         workflowService.startProcess(start);
     }

@@ -85,11 +85,15 @@
             <span v-else>{{ row.enableFlag === 'Y' ? '是' : '否' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="createdBy" label="创建人" width="100" />
+        <el-table-column label="创建人" width="180">
+          <template #default="{ row }">{{ formatUserDisplay(row.createdBy) }}</template>
+        </el-table-column>
         <el-table-column label="创建时间" min-width="120">
           <template #default="{ row }">{{ formatDate(row.creationDate) }}</template>
         </el-table-column>
-        <el-table-column prop="lastUpdatedBy" label="最后更新人" width="110" />
+        <el-table-column label="最后更新人" width="180">
+          <template #default="{ row }">{{ formatUserDisplay(row.lastUpdatedBy) }}</template>
+        </el-table-column>
         <el-table-column label="最后更新时间" min-width="120">
           <template #default="{ row }">{{ formatDate(row.lastUpdateDate) }}</template>
         </el-table-column>
@@ -126,6 +130,7 @@
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { fetchDictionaryItems } from '../../api/modules/dictionary'
+import { fetchUsers } from '../../api/modules/security'
 import {
   createFourAttrInspection,
   exportFourAttrInspections,
@@ -150,6 +155,7 @@ const detailVisible = ref(false)
 const currentDetails = ref<FourAttrInspectionDetail[]>([])
 const importInputRef = ref<HTMLInputElement>()
 const inspectionStageOptions = ref<DictionaryItem[]>([])
+const userDisplayById = ref<Record<number, string>>({})
 const activePanels = ref(['AUTHENTICITY', 'INTEGRITY', 'USABILITY', 'SECURITY'])
 const panelDefs = [
   { type: 'AUTHENTICITY', label: '真实性' },
@@ -316,8 +322,28 @@ const formatDate = (value?: string) => {
   return text.slice(0, 10)
 }
 
+const formatUserDisplay = (userId?: number) => {
+  if (!userId || userId <= 0) return '-'
+  return userDisplayById.value[userId] || String(userId)
+}
+
+const loadUserDisplays = async () => {
+  try {
+    const users = await fetchUsers()
+    userDisplayById.value = Object.fromEntries(
+      users.map((u) => [
+        Number(u.userId),
+        `${u.userName || u.username || `用户-${u.userId}`}${u.employeeNo ? ` ${u.employeeNo}` : ''}`
+      ])
+    )
+  } catch {
+    userDisplayById.value = {}
+  }
+}
+
 onMounted(async () => {
   await loadInspectionStageOptions()
+  await loadUserDisplays()
   await loadList()
 })
 </script>

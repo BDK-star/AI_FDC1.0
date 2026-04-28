@@ -20,7 +20,7 @@
 
 - 文档查询列表：多条件筛选、结果列表、跳转文档详情
 - 文档详情：基本信息、归档信息、扩展信息（可折叠）、附件列表、操作日志
-- 附件预览：获取 `EDM_ID` 并打开外部系统预览页面、下载原文（按权限）
+- 附件预览：通过附件预览接口返回资源流进行预览，下载原文（按权限）
 - 批量导出：从查询结果或勾选结果发起导出任务、提示跳转“我的导出”
 - 我的导出（工作空间亦称「导出查询」）：导出任务列表、下载/删除
 - 工作空间「导入查询」：导入类任务列表与结果操作（详见 `F03_06`）
@@ -28,46 +28,43 @@
 
 ### 1.2 非范围（Out of scope）
 
-- 应归档数据域的「应归档数据管理」等（HTML：`data_maintenance.html` 等）**不**作为 F03 文档查询主流程验收范围，详见 `F03_90_ArchiveReceivableData_Reference.md`。
-- 工作空间「导入查询」**页面规格**以 `F03_06` 为准（原型 `import_query.html`）；`F03_90` 仅保留与应归档数据交叉的参考摘录，避免与文档查询列表混淆。
+- 应归档数据域的「应归档数据管理」等能力不作为 F03 文档查询主流程验收范围，详见 `F03_90_ArchiveReceivableData_Reference.md`。
+- 工作空间「导入查询」页面规格以 `F03_06` 为准；`F03_90` 仅保留跨域边界说明，避免与文档查询列表混淆。
 
-## 2. 页面清单（HTML 原型对应）
+## 2. 页面清单（前端代码对应）
 
 
-| 页面   | HTML 原型                                        | 说明                                |
+| 页面   | 前端路由 / 视图 | 说明 |
 | ---- | ---------------------------------------------- | --------------------------------- |
-| 文档查询 | `reference_html/pages/document_search.html`    | 筛选区 + 列表区；含「批量导出」「批量导入查询」入口（**全站任务能力的调用方之一**，见 §1.0） |
-| 文档详情 | `reference_html/pages/document_detail.html`    | 多模块折叠信息 + 附件 + 操作日志               |
-| 文档编辑 | `reference_html/pages/document_edit.html`      | 原型存在，但是否属于 F03 需确认（建议纳入应归档数据管理功能） |
-| 文档创建 | `reference_html/pages/document_create.html`    | 原型存在，但是否属于 F03 需确认（建议纳入应归档数据管理功能） |
-| 附件预览（外部系统） | `external_system（无内部预览页）` | 点击详情附件列表“预览”后获取 `EDM_ID` 并打开外部系统预览页面 |
-| 我的导出（导出查询） | `reference_html/pages/my_exports.html`         | 工作空间导出任务列表，与文档查询筛选条件无关；见 `F03_05` |
-| 导入查询 | `reference_html/pages/import_query.html`       | 工作空间导入任务列表，与文档查询筛选条件无关；见 `F03_06` |
-| 我的草稿 | （原型待补充） | 工作空间草稿列表；见 `F03_07` |
+| 文档查询 | `/archive-management/query` + `ArchiveQueryView.vue` | 筛选区 + 列表区；含「批量导出」「批量导入查询」入口（全站任务能力调用方之一） |
+| 文档详情 | `/archive-management/detail/:id` + `ArchiveDetailView.vue` | 多模块折叠信息 + 附件 + 操作日志 |
+| 我的导出（导出查询） | `/workspace/export-query` + `ExportQueryWorkspaceView.vue` | 工作空间导出任务列表，与文档查询筛选条件无关；见 `F03_05` |
+| 导入查询 | `/workspace/import-query` + `ImportQueryWorkspaceView.vue` | 工作空间导入任务列表，与文档查询筛选条件无关；见 `F03_06` |
+| 我的草稿 | `/workspace/my-drafts` + `MyDraftsWorkspaceView.vue` | 工作空间草稿列表；见 `F03_07` |
 
 
-## 3. 角色与权限（来自旧规格）
+## 3. 角色与权限（代码与安全文档口径）
 
-> 详细权限点需与 `/.docs/03_Security.md` 的 RBAC 对齐。本节先按旧规格沉淀“页面能力矩阵”。
+> 详细权限点需与 `/.docs/03_Security.md` 的 RBAC 对齐。本节按当前功能页面能力沉淀。
 
-旧规格角色示例（节选）：财经文档数据维护员、文档账管员、文档管理员、系统管理员、IT support、报表分析员等。  
-权限能力项（节选）：文档查询列表、文档列表导出、文档批量查询、附件预览/下载/批量下载、导入查询结果列表/重新查询/结果导出等。
+角色以系统角色配置为准。  
+能力项（节选）：文档查询列表、文档导出、附件预览/下载/批量下载、导入查询结果列表/重新查询/结果导出等。
 
 ## 4. 共性规则（跨页面一致）
 
-- **必选条件**：文档查询页“文档类型”为必选；未选择时触发提示“请选择文档类型”（HTML toast + 旧规格一致）。
+- **必选条件**：文档查询页“文档类型”为必选；未选择时触发提示“请选择文档类型”。
 - **时间范围**：涉及日期/档期范围输入时，限定范围不超过 1 年；超出提示“选择范围不能超过一年”。
 - **批量输入上限**：如“文档业务编码/其他归档号”等支持多条输入时，上限 100 条；超出提示“输入条目不能超过100条”。
-- **查询结果导出**：
-  - 未勾选行：默认导出当前查询结果（旧规格）
-  - 勾选行：导出勾选集合
+- **查询结果导出（当前实现）**：
+  - 仅支持导出勾选集合（`docIds` 必填）
+  - 未勾选时需前端拦截提示
   - 成功后提示并引导跳转“导入导出 > 我的导出”
 
-## 5. 关键数据来源（旧规格提及）
+## 5. 关键数据来源（代码口径）
 
 > 字段命名与类型以 `/.docs/01_DataModel.md` 为准；这里仅记录“数据来源关联关系”。
 
-- 文档主表（旧规格引用）：`fdc_doc_t`（示例字段：`doc_busi_no`、`doc_name`、`doc_status`、`start_period`、`end_period`、`carrier_type`、`source_system`…）
+- 文档主表：`fdc_doc_t`（示例字段：`doc_busi_no`、`doc_name`、`doc_status`、`start_period`、`end_period`、`carrier_type`、`source_system`…）
 - 文档类型：`fdc_document_type_t`
 - 业务模块：`fdc_business_module_t`
 - 归档主体：`fdc_archived_entity_t`、`fdc_archived_entity_unit_t`
@@ -76,18 +73,33 @@
 - 操作日志：`fdc_doc_op_log_t`、`fdc_doc_log_att_t`
 - LOOKUP：`FDC_CARRIER_TYPE`、`FDC_DOC_STATUS`、`FDC_SECURITY_LEVEL`、`FDC_SOURCE_SYS` 等
 
-## 6. F03 相关 API 资源（扁平命名）
+## 6. F03 相关 API 资源（代码对齐）
 
 > 全局约定见 `/.docs/05_API_Conventions.md`；各端点请求/响应体见 `F03_01`～`F03_07`。
 
 | 资源 | 说明 |
 |---|---|
-| `documents` | 列表：`POST .../search-page`（主）、可选 `GET .../page`；详情：`GET .../{id}`；导出：`POST .../export` |
-| `document-attachments` | 列表：`GET .../page` 或 `POST .../search-page`；预览/下载：`GET .../{id}/preview`、`GET .../{id}/download`；批量：`POST .../export` |
-| `document-operation-logs` | 列表：`POST .../search-page`（filter.documentId） |
-| `document-operation-log-attachments` | 补充附件：`GET .../{id}/download` |
-| `export-tasks` | 导出任务中心（**全模块共用**）：我的导出 / 导出查询 `GET .../page`；详情/下载/删除：`GET|DELETE .../{id}`，`GET .../{id}/download` |
-| `workspace-io-jobs` | 工作空间导入任务列表等（**全模块共用**）：`GET .../page` 或 `POST .../search-page`；详情/删除/结果导出见 `F03_06` |
-| `drafts` | 我的草稿：`GET .../page` 等，见 `F03_07` |
-| `document-query-imports` | 导入**提交**与模板（资源名含 query 为历史命名；**不仅**文档查询可调用，见 `F03_90`）：`GET .../template`、`POST .../import` |
+| `archive-management/pending-documents/query` | 文档查询主列表（POST） |
+| `archive-management/create/query` | 文档查询另一实现线（POST） |
+| `archive-management/archives/{archiveId}` | 文档详情（GET） |
+| `archive-management/attachments/{attachmentId}/preview` | 附件预览（GET，流式资源） |
+| `archive-management/attachments/{attachmentId}/download` | 附件下载（GET） |
+| `archive-management/archives/{archiveId}/attachments/download-all` | 附件批量下载（GET） |
+| `archive-management/pending-documents/export-jobs` | 批量导出任务提交（POST，`docIds` 必填） |
+| `workspace/io-jobs/*` | 我的导出/导入查询统一任务中心 |
+
+## 7. 权限与安全（总览）
+
+- 核心权限：文档查询、详情查看、附件预览、附件下载、导出提交、导出下载。
+- 数据范围：至少按用户可见组织/业务范围过滤。
+- 审计范围：查询、详情、预览、下载、导出提交与下载。
+
+## 8. 测试与验收锚点（总览）
+
+- 各子文档至少覆盖：列表/详情正常路径、权限拦截路径、失败路径。
+- F03 统一验收关注点：
+  - 查询条件与返回字段一致性
+  - 附件预览下载权限正确性
+  - 导出任务提交与工作空间任务可追踪性
+  - 草稿能力与正式数据隔离
 

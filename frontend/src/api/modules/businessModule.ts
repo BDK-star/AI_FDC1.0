@@ -15,13 +15,73 @@ export function buildModuleQueryTree(nodes: BusinessModuleNode[]): ModuleQueryTr
   }))
 }
 
+export function isModuleCodeWithinDocumentType(
+  nodes: BusinessModuleNode[],
+  documentTypeCode: string,
+  moduleCode: string
+): boolean {
+  const root = String(documentTypeCode || '').trim()
+  const target = String(moduleCode || '').trim()
+  if (!root || !target) return false
+  if (root === target) return true
+  const node = findModuleNodeByCode(nodes, target)
+  if (!node) return false
+  const ancestors = String(node.ancestorPath || '')
+    .split('/')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return ancestors.includes(root)
+}
+
+export function filterBusinessModuleTreeByDocumentType(
+  nodes: BusinessModuleNode[],
+  documentTypeCode: string
+): BusinessModuleNode[] {
+  const root = String(documentTypeCode || '').trim()
+  if (!root) return nodes
+  const cloned = cloneModuleTree(nodes)
+  const rootNode = cloned.find((node) => String(node.moduleCode || '').trim() === root)
+  return rootNode ? [rootNode] : []
+}
+
+export function resolveRootDocumentTypeCodeByModule(
+  nodes: BusinessModuleNode[],
+  moduleCode: string
+): string {
+  const target = String(moduleCode || '').trim()
+  if (!target) return ''
+  const node = findModuleNodeByCode(nodes, target)
+  if (!node) return ''
+  const ancestors = String(node.ancestorPath || '')
+    .split('/')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return ancestors[0] || String(node.moduleCode || '').trim()
+}
+
+function findModuleNodeByCode(nodes: BusinessModuleNode[], moduleCode: string): BusinessModuleNode | null {
+  for (const node of nodes) {
+    if (String(node.moduleCode || '').trim() === moduleCode) return node
+    const found = findModuleNodeByCode(node.children || [], moduleCode)
+    if (found) return found
+  }
+  return null
+}
+
+function cloneModuleTree(nodes: BusinessModuleNode[]): BusinessModuleNode[] {
+  return (nodes || []).map((node) => ({
+    ...node,
+    children: cloneModuleTree(node.children || [])
+  }))
+}
+
 export interface BusinessModuleCommand {
   moduleCode: string
   moduleName: string
   parentCode?: string
   enabledFlag: 'Y' | 'N'
   sortOrder?: number
-  securityLevel?: '公开' | '秘密' | '机密'
+  securityLevelCode?: string
   integrationType?: '全部集成' | '部分集成' | '不集成'
   description?: string
   remark?: string
@@ -32,7 +92,7 @@ export interface BusinessModuleUpdateCommand {
   parentCode?: string
   enabledFlag: 'Y' | 'N'
   sortOrder?: number
-  securityLevel?: '公开' | '秘密' | '机密'
+  securityLevelCode?: string
   integrationType?: '全部集成' | '部分集成' | '不集成'
   description?: string
   remark?: string
@@ -41,8 +101,8 @@ export interface BusinessModuleUpdateCommand {
 export interface BusinessModuleExtFieldCommand {
   fieldCode: string
   fieldScope: 'BASIC' | 'ATTACHMENT'
-  applicationFunctions?: ('应收' | '移交')[]
-  extAttribute?: 'ATTR1' | 'ATTR2' | 'ATTR3' | 'ATTR4' | 'ATTR5' | 'ATTR6'
+  applicationFunctions?: ('应归档数据' | '移交')[]
+  extAttribute?: string
   fieldName: string
   englishFieldName?: string
   dataType: 'TEXT' | 'NUMBER' | 'DATE' | 'DATETIME' | 'DICT' | 'BOOLEAN'

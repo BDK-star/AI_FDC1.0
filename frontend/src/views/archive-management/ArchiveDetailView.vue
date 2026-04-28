@@ -407,40 +407,61 @@ const archiveInfoItems = computed(() => {
     const s = String(v).trim()
     return s === '' ? '-' : s
   }
+  const extCell = (...keys: string[]) => {
+    for (const key of keys) {
+      const v = (ext as Record<string, unknown>)[key]
+      const s = String(v ?? '').trim()
+      if (s) return s
+    }
+    return '-'
+  }
+  const extDateCell = (...keys: string[]) => {
+    for (const key of keys) {
+      const v = (ext as Record<string, unknown>)[key]
+      const s = String(v ?? '').trim()
+      if (s) return formatDateTime(s)
+    }
+    return '-'
+  }
   const docOrg = { label: '文档组织', value: cell(d.documentOrganizationCode) }
   const archiveType = { label: '档案类型', value: cell(d.archiveTypeCode) }
   const visibility = { label: '是否可见', value: cell(d.documentVisibility ?? ext.visibility ?? '是') }
-
-  if (isPureElectronicCarrier(d.carrierTypeCode)) {
-    return [docOrg, visibility]
+  const custodyStatus = { label: '保管状态', value: cell(d.custodyStatus || d.archiveStatus) }
+  const copies = { label: '份数', value: isPureElectronicCarrier(d.carrierTypeCode) ? '-' : extCell('copies') }
+  const barcodeModule = { label: '条码模块', value: extCell('barcodeModule') }
+  const isElectronic = isPureElectronicCarrier(d.carrierTypeCode)
+  const isUnarchivedValue = (v: unknown) => {
+    const raw = String(v ?? '').trim()
+    if (!raw) return false
+    const upper = raw.toUpperCase()
+    return upper === 'UNARCHIVED' || raw === '未归档'
   }
+  const isUnarchivedLifecycle = isUnarchivedValue(d.lifecycleStatus) || isUnarchivedValue(d.archiveStatus)
 
-  const lifecycle = String(d.lifecycleStatus || '').toUpperCase()
-  const isPendingLike = lifecycle === 'UNARCHIVED' || lifecycle === 'DRAFT'
-  if (isPendingLike) {
-    return [
-      docOrg,
-      archiveType,
-      visibility,
-      { label: '条码模块', value: cell(ext.barcodeModule) },
-      { label: '保管状态', value: cell(d.custodyStatus || d.archiveStatus) }
-    ]
+  if (isUnarchivedLifecycle) {
+    return [docOrg, archiveType, visibility, custodyStatus, copies, barcodeModule]
   }
 
   return [
     docOrg,
     archiveType,
     visibility,
-    { label: '条码模块', value: cell(ext.barcodeModule) },
-    { label: '档案条码', value: cell(ext.archiveBarcodeRange) },
-    { label: '文档编号', value: cell(ext.volumeSeqNo) },
-    { label: '册号', value: cell(ext.volumeNoRange) },
-    { label: '册条码', value: cell(ext.volumeBarcodeRange) },
-    { label: '保管状态', value: cell(d.custodyStatus || d.archiveStatus) },
-    { label: '库房', value: cell(d.currentWarehouseCode) },
-    { label: '库位', value: cell(d.currentLocationCode) },
-    { label: '份数', value: cell(ext.copies) },
-    { label: '剩余份数', value: cell(ext.remainingCopies) }
+    custodyStatus,
+    copies,
+    barcodeModule,
+    { label: '档案条码', value: isElectronic ? '-' : extCell('archiveBarcodeRange', 'archiveBarcode') },
+    { label: '核销日期', value: isElectronic ? '-' : extDateCell('verificationDateRange', 'verificationDate') },
+    { label: '核销人', value: isElectronic ? '-' : extCell('verifiedBy', 'verificationBy') },
+    { label: '文档编号', value: isElectronic ? '-' : extCell('volumeSeqNo') },
+    { label: '册条码', value: isElectronic ? '-' : extCell('volumeBarcodeRange', 'volumeBarcode') },
+    { label: '成册日期', value: isElectronic ? '-' : extDateCell('volumizationDateRange', 'volumizationDate') },
+    { label: '成册人', value: isElectronic ? '-' : extCell('assembledBy') },
+    { label: '册号', value: isElectronic ? '-' : extCell('volumeNoRange', 'volumeNo') },
+    { label: '库房', value: isElectronic ? '-' : cell(d.currentWarehouseCode) },
+    { label: '库位', value: isElectronic ? '-' : cell(d.currentLocationCode) },
+    { label: '入库日期', value: isElectronic ? '-' : extDateCell('storageDateRange', 'storageDate') },
+    { label: '入库人', value: isElectronic ? '-' : extCell('storedBy') },
+    { label: '剩余份数', value: isElectronic ? '-' : extCell('remainingCopies') }
   ]
 })
 
@@ -625,7 +646,7 @@ watch(
   () => {
     if (route.name !== 'archive-management-detail') return
     const isPending = firstQueryValue(route.query.from) === 'pending'
-    document.title = isPending ? `待归档数据详情 - ${APP_TAB_TITLE}` : `文档详情 - ${APP_TAB_TITLE}`
+    document.title = isPending ? `应归档数据详情 - ${APP_TAB_TITLE}` : `文档详情 - ${APP_TAB_TITLE}`
   },
   { immediate: true }
 )

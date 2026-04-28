@@ -141,6 +141,7 @@ public class PendingDocumentQueryController {
 
     @PostMapping("/query")
     public ApiResponse<List<PendingDocumentRowResponse>> query(@RequestBody PendingDocumentQueryCommand command) {
+        validateDocumentTypeArchiveTypeConsistency(command);
         Map<String, String> documentTypeNameMap = businessModuleMapper.selectList(new LambdaQueryWrapper<BusinessModule>()
                 .eq(BusinessModule::getDeleteFlag, "N"))
             .stream()
@@ -161,9 +162,18 @@ public class PendingDocumentQueryController {
                    source_system, security_level, description, fdc_document_t.creation_date as creation_date,
                    fdc_document_t.created_by as created_by, fdc_document_t.last_updated_by as last_updated_by, fdc_document_t.last_update_date as last_update_date,
                    cp.country_code, geo.rep_office_name, geo.region_name,
-                   coalesce(owner.user_name, cast(fdc_document_t.doc_resp_person_id as varchar)) as owner_name,
-                   coalesce(created_u.user_name, cast(fdc_document_t.created_by as varchar)) as created_by_name,
-                   coalesce(updated_u.user_name, cast(fdc_document_t.last_updated_by as varchar)) as updated_by_name
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(owner.user_name, ''), nullif(owner.employee_no, ''))), ''),
+                     cast(fdc_document_t.doc_resp_person_id as varchar)
+                   ) as owner_name,
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(created_u.user_name, ''), nullif(created_u.employee_no, ''))), ''),
+                     cast(fdc_document_t.created_by as varchar)
+                   ) as created_by_name,
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(updated_u.user_name, ''), nullif(updated_u.employee_no, ''))), ''),
+                     cast(fdc_document_t.last_updated_by as varchar)
+                   ) as updated_by_name
             from fdc_document_t
             left join tpl_user_t owner on owner.user_id = fdc_document_t.doc_resp_person_id
             left join tpl_user_t created_u on created_u.user_id = fdc_document_t.created_by
@@ -293,6 +303,17 @@ public class PendingDocumentQueryController {
             sql.append(" and geo.region_name = :region");
             params.addValue("region", command.getRegion().trim());
         }
+        if (hasText(command.getDutyPerson())) {
+            sql.append("""
+                and (
+                      cast(fdc_document_t.doc_resp_person_id as varchar) ilike :dutyPerson
+                   or coalesce(owner.user_name, '') ilike :dutyPerson
+                   or coalesce(owner.employee_no, '') ilike :dutyPerson
+                   or concat_ws(' ', coalesce(owner.user_name, ''), coalesce(owner.employee_no, '')) ilike :dutyPerson
+                )
+                """);
+            params.addValue("dutyPerson", "%" + command.getDutyPerson().trim() + "%");
+        }
         sql.append(" order by fdc_document_t.doc_id desc");
 
         List<PendingDocumentRowResponse> rows = namedParameterJdbcTemplate.query(sql.toString(), params, (ResultSet rs, int rowNum) -> {
@@ -344,6 +365,35 @@ public class PendingDocumentQueryController {
         return ApiResponse.success(rows == null ? new ArrayList<>() : rows);
     }
 
+    private void validateDocumentTypeArchiveTypeConsistency(PendingDocumentQueryCommand command) {
+        String docType = trimToNull(command.getDocumentTypeCode());
+        String archiveType = trimToNull(command.getArchiveTypeCode());
+        if (!StringUtils.hasText(docType) || !StringUtils.hasText(archiveType)) {
+            return;
+        }
+        BusinessModule module = businessModuleMapper.selectOne(new LambdaQueryWrapper<BusinessModule>()
+            .eq(BusinessModule::getModuleCode, archiveType)
+            .eq(BusinessModule::getDeleteFlag, "N")
+            .last("limit 1"));
+        if (module == null) {
+            return;
+        }
+        if (docType.equals(archiveType)) {
+            return;
+        }
+        String ancestorPath = trimToNull(module.getAncestorPath());
+        if (!StringUtils.hasText(ancestorPath)) {
+            throw new BusinessException("archiveTypeCode must belong to the selected documentTypeCode");
+        }
+        List<String> ancestors = Arrays.stream(ancestorPath.split("/"))
+            .map(String::trim)
+            .filter(StringUtils::hasText)
+            .toList();
+        if (!ancestors.contains(docType)) {
+            throw new BusinessException("archiveTypeCode must belong to the selected documentTypeCode");
+        }
+    }
+
     /**
      * 「我的草稿」：fdc_pending_document_draft_t，载荷为 JSON，不混用 fdc_document_t。
      */
@@ -359,7 +409,10 @@ public class PendingDocumentQueryController {
                    d.creation_date,
                    d.last_update_date,
                    d.created_by,
-                   coalesce(creator.user_name, cast(d.created_by as varchar)) as created_by_name,
+                   coalesce(
+                    nullif(trim(concat_ws(' ', nullif(creator.user_name, ''), nullif(creator.employee_no, ''))), ''),
+                     cast(d.created_by as varchar)
+                   ) as created_by_name,
                    cp.company_project_name,
                    cp.country_code,
                    geo.rep_office_name,
