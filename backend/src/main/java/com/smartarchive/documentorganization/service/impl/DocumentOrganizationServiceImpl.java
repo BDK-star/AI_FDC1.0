@@ -1,6 +1,7 @@
 package com.smartarchive.documentorganization.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.smartarchive.common.audit.service.OperationAuditService;
 import com.smartarchive.common.exception.BusinessException;
 import com.smartarchive.companyproject.domain.Country;
@@ -152,10 +153,12 @@ public class DocumentOrganizationServiceImpl implements DocumentOrganizationServ
     public void delete(String documentOrganizationCode) {
         DocumentOrganization existing = findActiveByCode(requireText(documentOrganizationCode, "documentOrganizationCode"));
         DocumentOrganizationDetailResponse before = toDetail(existing);
-        existing.setDeleteFlag("Y");
-        existing.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        existing.setLastUpdateDate(LocalDateTime.now());
-        documentOrganizationMapper.updateById(existing);
+        documentOrganizationMapper.update(null, new LambdaUpdateWrapper<DocumentOrganization>()
+            .eq(DocumentOrganization::getId, existing.getId())
+            .eq(DocumentOrganization::getDeleteFlag, "N")
+            .set(DocumentOrganization::getDeleteFlag, "Y")
+            .set(DocumentOrganization::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(DocumentOrganization::getLastUpdateDate, LocalDateTime.now()));
         operationAuditService.record(MODULE_CODE, MODULE_NAME, "DOCUMENT_ORGANIZATION", existing.getDocumentOrganizationCode(), "DELETE", "Soft delete document organization", before, null, SYSTEM_OPERATOR_ID, SYSTEM_OPERATOR_NAME);
     }
 

@@ -1,6 +1,7 @@
 package com.smartarchive.archiveflow.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.smartarchive.archiveflow.domain.ArchiveFlowRule;
 import com.smartarchive.archiveflow.dto.ArchiveFlowRuleCreateCommand;
 import com.smartarchive.archiveflow.dto.ArchiveFlowRuleDetailResponse;
@@ -166,10 +167,12 @@ public class ArchiveFlowRuleServiceImpl implements ArchiveFlowRuleService {
     public void delete(Long id) {
         ArchiveFlowRule existing = findActiveById(id);
         ArchiveFlowRuleDetailResponse before = toDetail(existing);
-        existing.setDeleteFlag("Y");
-        existing.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        existing.setLastUpdateDate(LocalDateTime.now());
-        archiveFlowRuleMapper.updateById(existing);
+        archiveFlowRuleMapper.update(null, new LambdaUpdateWrapper<ArchiveFlowRule>()
+            .eq(ArchiveFlowRule::getId, existing.getId())
+            .eq(ArchiveFlowRule::getDeleteFlag, "N")
+            .set(ArchiveFlowRule::getDeleteFlag, "Y")
+            .set(ArchiveFlowRule::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(ArchiveFlowRule::getLastUpdateDate, LocalDateTime.now()));
         operationAuditService.record(MODULE_CODE, MODULE_NAME, "ARCHIVE_FLOW_RULE", existing.getCompanyProjectCode(), "DELETE", "Soft delete archive flow rule", before, null, SYSTEM_OPERATOR_ID, SYSTEM_OPERATOR_NAME);
     }
 

@@ -1,6 +1,7 @@
 package com.smartarchive.dictionary.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.smartarchive.common.exception.BusinessException;
 import com.smartarchive.dictionary.domain.DictionaryCategory;
 import com.smartarchive.dictionary.domain.DictionaryItem;
@@ -104,10 +105,12 @@ public class DictionaryServiceImpl implements DictionaryService {
         if (itemCount > 0) {
             throw new BusinessException("Please delete dictionary items under this category first");
         }
-        entity.setDeleteFlag("Y");
-        entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        entity.setLastUpdateDate(LocalDateTime.now());
-        dictionaryCategoryMapper.updateById(entity);
+        dictionaryCategoryMapper.update(null, new LambdaUpdateWrapper<DictionaryCategory>()
+            .eq(DictionaryCategory::getId, entity.getId())
+            .eq(DictionaryCategory::getDeleteFlag, "N")
+            .set(DictionaryCategory::getDeleteFlag, "Y")
+            .set(DictionaryCategory::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(DictionaryCategory::getLastUpdateDate, LocalDateTime.now()));
     }
 
     @Override
@@ -150,10 +153,12 @@ public class DictionaryServiceImpl implements DictionaryService {
     @Transactional
     public void deleteItem(String categoryCode, String itemCode) {
         DictionaryItem entity = requireItem(categoryCode, itemCode);
-        entity.setDeleteFlag("Y");
-        entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        entity.setLastUpdateDate(LocalDateTime.now());
-        dictionaryItemMapper.updateById(entity);
+        dictionaryItemMapper.update(null, new LambdaUpdateWrapper<DictionaryItem>()
+            .eq(DictionaryItem::getId, entity.getId())
+            .eq(DictionaryItem::getDeleteFlag, "N")
+            .set(DictionaryItem::getDeleteFlag, "Y")
+            .set(DictionaryItem::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(DictionaryItem::getLastUpdateDate, LocalDateTime.now()));
     }
 
     private DictionaryCategory requireCategory(String categoryCode) {

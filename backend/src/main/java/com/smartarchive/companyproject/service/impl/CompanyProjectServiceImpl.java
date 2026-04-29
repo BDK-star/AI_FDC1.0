@@ -142,10 +142,12 @@ public class CompanyProjectServiceImpl implements CompanyProjectService {
             throw new BusinessException("Country dictionary is referenced by company/project data");
         }
         CountryDictionaryItemResponse before = toCountryDictionaryItem(existing);
-        existing.setDeleteFlag("Y");
-        existing.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        existing.setLastUpdateDate(LocalDateTime.now());
-        countryMapper.updateById(existing);
+        countryMapper.update(null, new LambdaUpdateWrapper<Country>()
+            .eq(Country::getId, existing.getId())
+            .eq(Country::getDeleteFlag, "N")
+            .set(Country::getDeleteFlag, "Y")
+            .set(Country::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(Country::getLastUpdateDate, LocalDateTime.now()));
         operationAuditService.record(MODULE_CODE, MODULE_NAME, "COUNTRY_DICTIONARY", existing.getCountryCode(), "DELETE", "Soft delete country dictionary", before, null, SYSTEM_OPERATOR_ID, SYSTEM_OPERATOR_NAME);
     }
 
@@ -218,10 +220,12 @@ public class CompanyProjectServiceImpl implements CompanyProjectService {
             throw new BusinessException("Org category dictionary is referenced by company/project data");
         }
         OrgCategoryDictionaryItemResponse before = toOrgCategoryDictionaryItem(existing);
-        existing.setDeleteFlag("Y");
-        existing.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        existing.setLastUpdateDate(LocalDateTime.now());
-        companyProjectOrgCategoryMapper.updateById(existing);
+        companyProjectOrgCategoryMapper.update(null, new LambdaUpdateWrapper<CompanyProjectOrgCategory>()
+            .eq(CompanyProjectOrgCategory::getId, existing.getId())
+            .eq(CompanyProjectOrgCategory::getDeleteFlag, "N")
+            .set(CompanyProjectOrgCategory::getDeleteFlag, "Y")
+            .set(CompanyProjectOrgCategory::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(CompanyProjectOrgCategory::getLastUpdateDate, LocalDateTime.now()));
         operationAuditService.record(MODULE_CODE, MODULE_NAME, "ORG_CATEGORY_DICTIONARY", existing.getCategoryCode(), "DELETE", "Soft delete org category dictionary", before, null, SYSTEM_OPERATOR_ID, SYSTEM_OPERATOR_NAME);
     }
 
@@ -294,10 +298,12 @@ public class CompanyProjectServiceImpl implements CompanyProjectService {
         CompanyProjectDetailResponse before = toDetail(existing);
         LocalDateTime now = LocalDateTime.now();
 
-        existing.setDeleteFlag("Y");
-        existing.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-        existing.setLastUpdateDate(now);
-        companyProjectMapper.updateById(existing);
+        companyProjectMapper.update(null, new LambdaUpdateWrapper<CompanyProject>()
+            .eq(CompanyProject::getId, existing.getId())
+            .eq(CompanyProject::getDeleteFlag, "N")
+            .set(CompanyProject::getDeleteFlag, "Y")
+            .set(CompanyProject::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(CompanyProject::getLastUpdateDate, now));
 
         companyProjectLineMapper.update(null, new LambdaUpdateWrapper<CompanyProjectLine>()
             .eq(CompanyProjectLine::getCompanyProjectCode, existing.getCompanyProjectCode())
@@ -517,5 +523,4 @@ public class CompanyProjectServiceImpl implements CompanyProjectService {
         return value.trim();
     }
 }
-
 
