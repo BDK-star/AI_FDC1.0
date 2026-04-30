@@ -452,8 +452,8 @@ const loadSession = async () => {
   if (aiResult.endPeriod && !form.endPeriod) form.endPeriod = aiResult.endPeriod
   if (aiResult.documentDate && !form.documentDate) form.documentDate = aiResult.documentDate
   if (session.value.carrierTypeCodeGuess && !form.carrierTypeCode) form.carrierTypeCode = session.value.carrierTypeCodeGuess
-  if (session.value.documentTypeCodeGuess && !form.documentTypeCode) {
-    form.documentTypeCode = session.value.documentTypeCodeGuess
+  if (session.value.busiModuleCodeGuess && !form.documentTypeCode) {
+    form.documentTypeCode = session.value.busiModuleCodeGuess
     await handleDocumentTypeChange(form.documentTypeCode)
   }
   if (form.companyProjectCode && form.archiveTypeCode) {

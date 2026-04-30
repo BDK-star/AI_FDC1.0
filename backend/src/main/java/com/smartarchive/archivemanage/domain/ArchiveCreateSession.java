@@ -22,14 +22,4 @@ public class ArchiveCreateSession {
     private LocalDateTime expireTime;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-
-    // Backward-compatible alias for merged branches still using documentTypeCodeGuess.
-    public String getDocumentTypeCodeGuess() {
-        return busiModuleCodeGuess;
-    }
-
-    // Backward-compatible alias for merged branches still using documentTypeCodeGuess.
-    public void setDocumentTypeCodeGuess(String documentTypeCodeGuess) {
-        this.busiModuleCodeGuess = documentTypeCodeGuess;
-    }
 }

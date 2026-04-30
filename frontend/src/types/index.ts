@@ -752,7 +752,7 @@ export interface ArchiveCreateSession {
   sessionCode: string
   createMode: 'AUTO' | 'MANUAL'
   sessionStatus: string
-  documentTypeCodeGuess?: string
+  busiModuleCodeGuess?: string
   carrierTypeCodeGuess?: string
   parseStatus: string
   aiSummarySnapshot?: string
