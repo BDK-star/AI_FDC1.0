@@ -32,4 +32,5 @@ knowledge-graph:
 
 app:
   cors:
+    # 本地端口 + ngrok 跨域由 WebConfig 的 allowedOriginPatterns（*.ngrok-*）覆盖，一般无需再列公网 URL
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175,http://localhost:5176,http://127.0.0.1:5176,http://localhost:5177,http://127.0.0.1:5177

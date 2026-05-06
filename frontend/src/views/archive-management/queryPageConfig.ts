@@ -10,13 +10,19 @@ export type MoreFieldShowFor =
 export interface MoreFilterFieldConfig {
   key: string
   label: string
-  type: 'input' | 'select' | 'daterange'
+  type: 'input' | 'select' | 'daterange' | 'cascader'
   placeholder?: string
   /** 单行 + 右侧抽屉多行录入（文档业务编码、发票号等） */
   multilineDrawer?: boolean
   multiple?: boolean
   showFor?: MoreFieldShowFor
   options?: Array<{ label: string; value: string }>
+  /**
+   * barcodeModules — 条码模块配置
+   * geoCountries — 国家维表（与新建文档/产生地一致）
+   * archiveDestinationCascader — 与「归档规则管理」相同的国家/省/市三级级联，值为叶子城市 regionCode
+   */
+  optionSource?: 'barcodeModules' | 'geoCountries' | 'archiveDestinationCascader'
 }
 
 export interface ListColumnConfig {
@@ -28,22 +34,55 @@ export interface ListColumnConfig {
 }
 
 const allMoreFields: MoreFilterFieldConfig[] = [
-  { key: 'country', label: '国家', type: 'select', multiple: true, showFor: 'ALL' },
-  { key: 'repOffice', label: '代表处', type: 'select', multiple: true, showFor: 'ALL' },
-  { key: 'region', label: '地区部', type: 'select', multiple: true, showFor: 'ALL' },
+  {
+    key: 'barcodeModuleCodes',
+    label: '条码模块',
+    type: 'select',
+    multiple: true,
+    showFor: 'ALL',
+    placeholder: '按业务模块映射的条码模块筛选（配置中心已启用）',
+    optionSource: 'barcodeModules'
+  },
+  {
+    key: 'documentArchiveTypes',
+    label: '档案类型',
+    type: 'select',
+    multiple: true,
+    showFor: 'ALL',
+    placeholder: '可多选（对应 fdc_document_t.arch_type_code）'
+  },
+  { key: 'country', label: '国家', type: 'select', multiple: false, showFor: 'ALL' },
+  { key: 'repOffice', label: '代表处', type: 'select', multiple: false, showFor: 'ALL' },
+  { key: 'region', label: '地区部', type: 'select', multiple: false, showFor: 'ALL' },
   { key: 'custodyStatus', label: '保管状态', type: 'select', multiple: true, showFor: 'ALL' },
   { key: 'securityLevelCode', label: '密级', type: 'select', multiple: true, showFor: 'ALL' },
   { key: 'description', label: '描述', type: 'input', showFor: 'ALL' },
-  { key: 'archiveDestination', label: '归档地', type: 'input', placeholder: '请选择', showFor: 'ALL' },
-  { key: 'originPlace', label: '产生地', type: 'input', placeholder: '请选择', showFor: 'ALL' },
+  {
+    key: 'archiveDestination',
+    label: '归档地',
+    type: 'cascader',
+    showFor: 'ALL',
+    placeholder: '请选择国家、省份或城市（任意一级）',
+    optionSource: 'archiveDestinationCascader'
+  },
+  {
+    key: 'originPlace',
+    label: '产生地',
+    type: 'select',
+    multiple: false,
+    showFor: 'ALL',
+    placeholder: '请选择国家',
+    optionSource: 'geoCountries'
+  },
   { key: 'dutyPerson', label: '归档责任人', type: 'input', showFor: 'ALL' },
   { key: 'respDept', label: '文档责任部门', type: 'input', placeholder: '请选择', showFor: 'ALL' },
   { key: 'createdBy', label: '创建人', type: 'input', showFor: 'ALL' },
   { key: 'creationDateRange', label: '创建日期', type: 'daterange', showFor: 'ALL' },
   { key: 'sourceSystem', label: '系统来源', type: 'select', multiple: true, showFor: 'ALL' },
   { key: 'archivedEntityName', label: '归档主体名称（含历史）', type: 'select', showFor: 'ALL' },
-  { key: 'barcodeModule', label: '条码模块', type: 'input', placeholder: '请选择', showFor: 'ALL' },
   { key: 'archiveBarcodeRange', label: '档案条码', type: 'input', showFor: 'ALL' },
+  { key: 'signDateRange', label: '签收日期', type: 'daterange', showFor: 'ALL' },
+  { key: 'signedBy', label: '签收人', type: 'select', multiple: false, showFor: 'ALL', placeholder: '请选择签收人' },
   { key: 'verificationDateRange', label: '核销日期', type: 'daterange', showFor: 'ALL' },
   { key: 'verifiedBy', label: '核销人', type: 'select', showFor: 'ALL' },
   { key: 'volumeSeqNo', label: '文档编号', type: 'input', showFor: 'ALL' },
@@ -57,15 +96,18 @@ const allMoreFields: MoreFilterFieldConfig[] = [
   { key: 'storedBy', label: '入库人', type: 'select', showFor: 'ALL' },
   { key: 'copies', label: '份数', type: 'input', showFor: 'ALL' },
   { key: 'remainingCopies', label: '剩余份数', type: 'input', showFor: 'ALL' },
-  { key: 'archiveType', label: '档案类型', type: 'select', multiple: true, showFor: 'ALL' },
-  { key: 'visibility', label: '是否可见', type: 'select', multiple: true, showFor: 'ALL' },
+  { key: 'visibility', label: '是否可见', type: 'select', multiple: false, showFor: 'ALL' },
   // 历史硬编码扩展筛选（会计/保函等）已迁移为“按业务模块动态展示”，此处不再静态配置。
 ]
 
+/** 文档查询「更多筛选」中暂不展示的字段（移除对应 key 即可重新启用） */
+const archiveQueryExcludedKeys = new Set<string>(['archivedEntityName'])
+
 const pendingExcludedKeys = new Set([
   'archivedEntityName',
-  'barcodeModule',
   'archiveBarcodeRange',
+  'signDateRange',
+  'signedBy',
   'verificationDateRange',
   'verifiedBy',
   'volumeSeqNo',
@@ -80,7 +122,7 @@ const pendingExcludedKeys = new Set([
   'archiveType'
 ])
 
-export const archiveQueryMoreFields = allMoreFields
+export const archiveQueryMoreFields = allMoreFields.filter((f) => !archiveQueryExcludedKeys.has(f.key))
 export const pendingQueryMoreFields = allMoreFields.filter((f) => !pendingExcludedKeys.has(f.key))
 
 export const archiveQueryColumns: ListColumnConfig[] = [
@@ -98,7 +140,7 @@ export const archiveQueryColumns: ListColumnConfig[] = [
   { label: '归档责任人', prop: 'dutyPerson', width: '120' },
   { label: '文档责任部门', prop: 'dutyDepartment', width: '140' },
   { label: '载体类型', prop: 'carrierTypeCode', width: '120' },
-  { label: '是否可见', prop: 'visibleFlag', width: '100' },
+  { label: '是否可见', prop: 'documentVisibility', width: '100' },
   { label: '系统来源', prop: 'sourceSystem', width: '140' },
   { label: '密级', prop: 'securityLevelName', width: '120' },
   { label: '描述', prop: 'remark', minWidth: 180 },

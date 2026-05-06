@@ -172,7 +172,7 @@ public class TransferApplicationArchiveMaterializationServiceImpl implements Tra
         String originPlace = trimToNull(detail.getArchPlaceAlpha2Code());
         String documentName = firstNonBlank(detail.getDocName(), "未命名文档");
         String docOrg = documentOrganizationCode;
-        String extAttr1Visibility = "是";
+        String extVisibleFlag = "1";
         Map<String, Object> attrColumns = buildDocumentAttrColumns(trimToNull(detail.getBusiModuleCode()), extValues);
         Object attr2 = attrColumns.get("attr2");
         Object attr3 = attrColumns.get("attr3");
@@ -302,7 +302,7 @@ public class TransferApplicationArchiveMaterializationServiceImpl implements Tra
                   doc_gen_date = ?, arch_place_alpha2_code = ?, origin_place_alpha2_code = ?, carrier_type = ?, doc_name = ?,
                   doc_organization_code = ?, doc_resp_dept_id = ?, doc_resp_person_id = ?, rentention_term = ?, security_level = ?,
                   doc_version = ?, source_id = ?, source_system = ?,
-                  description = ?, attr1 = ?, attr2 = ?, attr3 = ?, attr4 = ?, attr5 = ?, attr6 = ?, attr7 = ?, attr8 = ?, attr9 = ?,
+                  description = ?, visible_flag = ?, attr2 = ?, attr3 = ?, attr4 = ?, attr5 = ?, attr6 = ?, attr7 = ?, attr8 = ?, attr9 = ?,
                   attr10 = ?, attr11 = ?, attr12 = ?, attr13 = ?, attr14 = ?, attr15 = ?, attr16 = ?, attr17 = ?, attr18 = ?, attr19 = ?,
                   attr20 = ?, attr21 = ?, attr22 = ?, attr23 = ?, attr24 = ?, attr25 = ?, attr26 = ?, attr27 = ?, attr28 = ?, attr29 = ?,
                   attr30 = ?, attr31 = ?, attr32 = ?, attr33 = ?, attr34 = ?, attr35 = ?, attr36 = ?, attr37 = ?, attr38 = ?, attr39 = ?,
@@ -319,7 +319,7 @@ public class TransferApplicationArchiveMaterializationServiceImpl implements Tra
                 parseYearMonthEnd(detail.getEndArchPeriod(), docDate), varchar(trimToNull(detail.getBusiModuleCode()), 30), businessCode,
                 docDate.atStartOfDay(), archiveDestination, originPlace, carrierType, documentName,
                 docOrg, 1L, application.getApplicant(), retentionYears, varchar(securityLevelCode, 30), "1.0", sourceIdTrace, sourceSystem,
-                remark, extAttr1Visibility, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9,
+                remark, extVisibleFlag, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9,
                 attr10, attr11, attr12, attr13, attr14, attr15, attr16, attr17, attr18, attr19,
                 attr20, attr21, attr22, attr23, attr24, attr25, attr26, attr27, attr28, attr29,
                 attr30, attr31, attr32, attr33, attr34, attr35, attr36, attr37, attr38, attr39,
@@ -341,7 +341,7 @@ public class TransferApplicationArchiveMaterializationServiceImpl implements Tra
               doc_id, company_code, company_name, start_period, end_period, biz_module_code, doc_biz_no, doc_gen_date,
               arch_place_alpha2_code, origin_place_alpha2_code, carrier_type, doc_name, doc_organization_code,
               doc_resp_dept_id, doc_resp_person_id, rentention_term, security_level, doc_version, source_id, source_system, lifecycle_status, custody_status,
-              description, attr1, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9, attr10, attr11, attr12, attr13, attr14,
+              description, visible_flag, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9, attr10, attr11, attr12, attr13, attr14,
               attr15, attr16, attr17, attr18, attr19, attr20, attr21, attr22, attr23, attr24, attr25, attr26, attr27, attr28, attr29,
               attr30, attr31, attr32, attr33, attr34, attr35, attr36, attr37, attr38, attr39, attr40, attr41, attr42, attr43, attr44,
               attr45, attr46, attr47, attr48, attr49, attr50, attr51, attr52, attr53, attr54, attr55, attr56, attr57, attr58, attr59,
@@ -360,8 +360,8 @@ public class TransferApplicationArchiveMaterializationServiceImpl implements Tra
             parseYearMonthStart(detail.getStartArchPeriod(), docDate), parseYearMonthEnd(detail.getEndArchPeriod(), docDate),
             varchar(trimToNull(detail.getBusiModuleCode()), 30), businessCode, docDate.atStartOfDay(),
             archiveDestination, originPlace, carrierType, documentName, docOrg,
-            1L, application.getApplicant(), retentionYears, varchar(securityLevelCode, 30), "1.0", sourceIdTrace, sourceSystem, "UNARCHIVED", "UNARCHIVED",
-            remark, extAttr1Visibility,
+            1L, application.getApplicant(), retentionYears, varchar(securityLevelCode, 30), "1.0", sourceIdTrace, sourceSystem, "UNARCHIVED", "IN_STORAGE",
+            remark, extVisibleFlag,
             attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9, attr10, attr11, attr12, attr13, attr14, attr15, attr16, attr17, attr18, attr19, attr20,
             attr21, attr22, attr23, attr24, attr25, attr26, attr27, attr28, attr29, attr30, attr31, attr32, attr33, attr34, attr35, attr36, attr37, attr38, attr39, attr40,
             attr41, attr42, attr43, attr44, attr45, attr46, attr47, attr48, attr49, attr50, attr51, attr52, attr53, attr54, attr55, attr56, attr57, attr58, attr59, attr60,

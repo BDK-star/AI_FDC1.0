@@ -26,18 +26,35 @@ public class SecurityLevelResolver {
 
     public Resolved resolve(String rawFromDb) {
         List<SecurityLevelDictionary> levels = activeLevels();
+        if (levels == null) {
+            levels = List.of();
+        }
         if (!StringUtils.hasText(rawFromDb)) {
             return defaultInternal(levels);
         }
         String trimmed = rawFromDb.trim();
         for (SecurityLevelDictionary d : levels) {
+            if (d == null || !StringUtils.hasText(d.getSecurityLevelCode())) {
+                continue;
+            }
             if (trimmed.equalsIgnoreCase(d.getSecurityLevelCode())) {
-                return new Resolved(d.getSecurityLevelCode(), d.getSecurityLevelName(), true);
+                return new Resolved(
+                    d.getSecurityLevelCode(),
+                    Objects.toString(d.getSecurityLevelName(), d.getSecurityLevelCode()),
+                    true
+                );
             }
         }
         for (SecurityLevelDictionary d : levels) {
+            if (d == null) {
+                continue;
+            }
             if (Objects.equals(d.getSecurityLevelName(), trimmed)) {
-                return new Resolved(d.getSecurityLevelCode(), d.getSecurityLevelName(), true);
+                return new Resolved(
+                    d.getSecurityLevelCode(),
+                    Objects.toString(d.getSecurityLevelName(), d.getSecurityLevelCode()),
+                    true
+                );
             }
         }
         return new Resolved(trimmed, trimmed, false);
@@ -75,9 +92,19 @@ public class SecurityLevelResolver {
     }
 
     private Resolved defaultInternal(List<SecurityLevelDictionary> levels) {
+        if (levels == null) {
+            return new Resolved("INTERNAL", "内部", true);
+        }
         for (SecurityLevelDictionary d : levels) {
+            if (d == null || !StringUtils.hasText(d.getSecurityLevelCode())) {
+                continue;
+            }
             if ("INTERNAL".equalsIgnoreCase(d.getSecurityLevelCode())) {
-                return new Resolved(d.getSecurityLevelCode(), d.getSecurityLevelName(), true);
+                return new Resolved(
+                    d.getSecurityLevelCode(),
+                    Objects.toString(d.getSecurityLevelName(), "内部"),
+                    true
+                );
             }
         }
         return new Resolved("INTERNAL", "内部", true);
@@ -93,6 +120,9 @@ public class SecurityLevelResolver {
             .eq(SecurityLevelDictionary::getDeleteFlag, "N")
             .eq(SecurityLevelDictionary::getEnabledFlag, "Y")
             .orderByAsc(SecurityLevelDictionary::getSortOrder));
+        if (snap == null) {
+            snap = List.of();
+        }
         cache = snap;
         cacheAt = now;
         return snap;

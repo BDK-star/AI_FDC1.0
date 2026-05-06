@@ -22,7 +22,14 @@ public class WebConfig implements WebMvcConfigurer {
             .collect(Collectors.toList());
         registry.addMapping("/**")
             .allowedOrigins(allowedOrigins.toArray(String[]::new))
-            .allowedOriginPatterns("https://*.ngrok-free.dev")
+            .allowedOriginPatterns(
+                "https://*.ngrok-free.dev",
+                "https://*.ngrok-free.app",
+                "https://*.ngrok.app",
+                "https://*.ngrok.io",
+                "http://*.ngrok-free.dev",
+                "http://*.ngrok-free.app"
+            )
             .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
             .allowedHeaders("*")
             .allowCredentials(false)

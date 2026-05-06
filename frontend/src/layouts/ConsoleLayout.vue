@@ -50,6 +50,7 @@
             <el-menu-item index="/base-data/document-organizations">文档组织管理</el-menu-item>
             <el-menu-item index="/base-data/document-type-configs">文档类型配置</el-menu-item>
             <el-menu-item index="/base-data/business-modules">业务模块配置</el-menu-item>
+            <el-menu-item index="/base-data/barcode-modules">条码模块配置</el-menu-item>
             <el-menu-item index="/base-data/archive-flow-rules">归档规则管理</el-menu-item>
             <el-menu-item index="/base-data/warehouse">库房管理</el-menu-item>
             <el-menu-item index="/base-data/department-signatories">权签人维护</el-menu-item>

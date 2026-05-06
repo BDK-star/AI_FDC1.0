@@ -53,6 +53,15 @@ public class BusinessModuleController {
         return ApiResponse.success(null);
     }
 
+    /**
+     * 应归档批量导入模板：当前文档类型（根）与子树业务模块上 BASIC+应归档数据 扩展字段并集。
+     * 路径不可放在 {@code /ext-fields/...} 下，否则易与 {@code /ext-fields/{fieldCode}} 的 PUT 路由混淆导致 GET 报 method not supported。
+     */
+    @GetMapping("/{moduleCode}/pending-archive-ext-fields-union")
+    public ApiResponse<List<BusinessModuleExtFieldResponse>> pendingArchiveExtUnion(@PathVariable String moduleCode) {
+        return ApiResponse.success(businessModuleService.listPendingArchiveBasicExtFieldsUnionUnderDocumentType(moduleCode));
+    }
+
     @GetMapping("/{moduleCode}/ext-fields")
     public ApiResponse<List<BusinessModuleExtFieldResponse>> fields(@PathVariable String moduleCode,
                                                                     @RequestParam(required = false) String fieldScope,

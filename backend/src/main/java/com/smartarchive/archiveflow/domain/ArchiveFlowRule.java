@@ -21,6 +21,7 @@ public class ArchiveFlowRule {
     private String customRule;
     @TableField("arch_place_alpha2_code")
     private String archiveDestination;
+    @TableField("document_organization_code")
     private String documentOrganizationCode;
     @TableField("retention_term")
     private Integer retentionPeriodYears;

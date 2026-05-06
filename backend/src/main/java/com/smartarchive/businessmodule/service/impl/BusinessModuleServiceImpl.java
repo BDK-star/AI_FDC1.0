@@ -10,6 +10,8 @@ import com.smartarchive.businessmodule.dto.BusinessModuleExtFieldResponse;
 import com.smartarchive.businessmodule.dto.BusinessModuleNodeResponse;
 import com.smartarchive.businessmodule.dto.BusinessModuleParentOptionResponse;
 import com.smartarchive.businessmodule.dto.BusinessModuleUpdateCommand;
+import com.smartarchive.barcodemodule.domain.BarcodeModule;
+import com.smartarchive.barcodemodule.mapper.BarcodeModuleMapper;
 import com.smartarchive.businessmodule.mapper.BusinessModuleExtFieldMapper;
 import com.smartarchive.businessmodule.mapper.BusinessModuleMapper;
 import com.smartarchive.businessmodule.service.BusinessModuleService;
@@ -19,12 +21,18 @@ import com.smartarchive.dictionary.mapper.DictionaryItemMapper;
 import com.smartarchive.documenttypeconfig.domain.DocumentTypeConfig;
 import com.smartarchive.documenttypeconfig.mapper.DocumentTypeConfigMapper;
 import java.time.LocalDateTime;
+import java.util.Locale;
+import java.util.stream.IntStream;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -41,10 +49,10 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
     private static final String SECURITY_LEVEL_CATEGORY_CODE = "SECURITY_LEVEL";
     private static final String DEFAULT_SECURITY_LEVEL_CODE = "INTERNAL_PUBLIC";
     private static final List<String> SUPPORTED_APPLICATION_FUNCTIONS = List.of("应归档数据", "移交");
-    private static final Set<String> BASIC_TEXT_ATTRIBUTES = buildAttributePool("ATTR", 1, 40);
-    private static final Set<String> BASIC_NUMBER_ATTRIBUTES = buildAttributePool("ATTR", 41, 60);
-    private static final Set<String> BASIC_DATE_ATTRIBUTES = buildAttributePool("ATTR", 61, 80);
-    private static final Set<String> BASIC_DATETIME_ATTRIBUTES = buildAttributePool("ATTR", 81, 100);
+    private static final Set<String> BASIC_TEXT_ATTRIBUTES = buildAttributePool("ATTR", 1, 50);
+    private static final Set<String> BASIC_NUMBER_ATTRIBUTES = buildAttributePool("ATTR", 51, 80);
+    private static final Set<String> BASIC_DATE_ATTRIBUTES = buildAttributePool("ATTR", 81, 90);
+    private static final Set<String> BASIC_DATETIME_ATTRIBUTES = buildAttributePool("ATTR", 91, 100);
     private static final Set<String> ATTACHMENT_TEXT_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 1, 20);
     private static final Set<String> ATTACHMENT_NUMBER_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 21, 30);
     private static final Set<String> ATTACHMENT_DATE_ATTRIBUTES = buildAttributePool("ATTRIBUTE", 31, 40);
@@ -54,6 +62,7 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
     private final BusinessModuleExtFieldMapper extFieldMapper;
     private final DocumentTypeConfigMapper documentTypeConfigMapper;
     private final DictionaryItemMapper dictionaryItemMapper;
+    private final BarcodeModuleMapper barcodeModuleMapper;
 
     @Override
     public List<BusinessModuleNodeResponse> listTree() {
@@ -64,8 +73,10 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
                 .orderByAsc(BusinessModule::getLevelNum)
                 .orderByAsc(BusinessModule::getSortOrder)
                 .orderByAsc(BusinessModule::getModuleCode));
+        Map<String, BarcodeModule> barcodeByCode = loadBarcodeMapByCodes(
+            modules.stream().map(BusinessModule::getBarcodeModuleCode).filter(StringUtils::hasText).toList());
         Map<String, BusinessModuleNodeResponse> map = modules.stream()
-                .map(module -> toNode(module, securityLevelSnapshot))
+                .map(module -> toNode(module, securityLevelSnapshot, barcodeByCode))
                 .collect(Collectors.toMap(BusinessModuleNodeResponse::getModuleCode, Function.identity(), (a, b) -> a));
         List<BusinessModuleNodeResponse> roots = new ArrayList<>();
         for (BusinessModule module : modules) {
@@ -118,19 +129,27 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         entity.setIntegrationType(normalizeIntegrationType(command.getIntegrationType()));
         entity.setDescription(trimToNull(command.getDescription()));
         entity.setRemark(trimToNull(command.getRemark()));
+        String barcodeRef = normalizeBarcodeModuleRef(command.getBarcodeModuleCode());
+        assertBarcodeModuleAssignable(barcodeRef);
+        assertBarcodeOnlyForLeafModule(command.getModuleCode().trim(), barcodeRef);
+        entity.setBarcodeModuleCode(barcodeRef);
         entity.setDeleteFlag("N");
         entity.setCreatedBy(SYSTEM_OPERATOR_ID);
         entity.setCreationDate(LocalDateTime.now());
         entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
         entity.setLastUpdateDate(LocalDateTime.now());
         businessModuleMapper.insert(entity);
-        return toNode(entity, loadSecurityLevelSnapshot());
+        if (StringUtils.hasText(entity.getParentCode())) {
+            clearBarcodeWhenModuleHasChildren(entity.getParentCode().trim());
+        }
+        return toNode(entity, loadSecurityLevelSnapshot(), loadBarcodeMapByCodes(toBarcodeCodeList(entity.getBarcodeModuleCode())));
     }
 
     @Override
     @Transactional
     public BusinessModuleNodeResponse update(String moduleCode, BusinessModuleUpdateCommand command) {
         BusinessModule entity = requireModule(moduleCode);
+        String oldParentCode = entity.getParentCode();
         TreeMeta meta = resolveMeta(command.getParentCode(), moduleCode);
         entity.setModuleName(command.getModuleName().trim());
         entity.setParentCode(trimToNull(command.getParentCode()));
@@ -142,11 +161,27 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         entity.setIntegrationType(normalizeIntegrationType(command.getIntegrationType()));
         entity.setDescription(trimToNull(command.getDescription()));
         entity.setRemark(trimToNull(command.getRemark()));
+        Boolean patchBarcodeFlag = command.getPatchBarcodeModuleCode();
+        boolean applyBarcode = patchBarcodeFlag == null || Boolean.TRUE.equals(patchBarcodeFlag);
+        if (applyBarcode) {
+            String previousBarcode = normalizeBarcodeModuleRef(entity.getBarcodeModuleCode());
+            String barcodeRef = normalizeBarcodeModuleRef(command.getBarcodeModuleCode());
+            if (!Objects.equals(previousBarcode, barcodeRef)) {
+                assertBarcodeModuleAssignable(barcodeRef);
+            }
+            assertBarcodeOnlyForLeafModule(moduleCode, barcodeRef);
+            entity.setBarcodeModuleCode(barcodeRef);
+        }
         entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
         entity.setLastUpdateDate(LocalDateTime.now());
         businessModuleMapper.updateById(entity);
         refreshDescendants(entity);
-        return toNode(requireModule(moduleCode), loadSecurityLevelSnapshot());
+        String newParentCode = entity.getParentCode();
+        if (!Objects.equals(trimToNull(oldParentCode), trimToNull(newParentCode)) && StringUtils.hasText(newParentCode)) {
+            clearBarcodeWhenModuleHasChildren(newParentCode.trim());
+        }
+        BusinessModule refreshed = requireModule(moduleCode);
+        return toNode(refreshed, loadSecurityLevelSnapshot(), loadBarcodeMapByCodes(toBarcodeCodeList(refreshed.getBarcodeModuleCode())));
     }
 
     @Override
@@ -165,39 +200,186 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
 
     @Override
     public List<BusinessModuleExtFieldResponse> listFields(String moduleCode, String fieldScope) {
-        requireModule(moduleCode);
-        LambdaQueryWrapper<BusinessModuleExtField> wrapper = new LambdaQueryWrapper<BusinessModuleExtField>()
-                .eq(BusinessModuleExtField::getModuleCode, moduleCode)
+        BusinessModule module = requireModule(moduleCode);
+        String normalizedScope = StringUtils.hasText(fieldScope) ? fieldScope.trim().toUpperCase() : null;
+        List<String> lineageCodes = resolveLineageModuleCodes(module);
+        List<BusinessModuleExtField> all = extFieldMapper.selectList(new LambdaQueryWrapper<BusinessModuleExtField>()
+                .in(BusinessModuleExtField::getModuleCode, lineageCodes)
                 .eq(BusinessModuleExtField::getDeleteFlag, "N")
+                .eq(StringUtils.hasText(normalizedScope), BusinessModuleExtField::getFieldScope, normalizedScope)
                 .orderByAsc(BusinessModuleExtField::getSortOrder)
-                .orderByAsc(BusinessModuleExtField::getFieldCode);
-        if (StringUtils.hasText(fieldScope)) {
-            wrapper.eq(BusinessModuleExtField::getFieldScope, fieldScope.trim().toUpperCase());
-        }
-        return extFieldMapper.selectList(wrapper).stream().map(this::toFieldResponse).toList();
+                .orderByAsc(BusinessModuleExtField::getFieldCode));
+        return resolveEffectiveInheritedFields(lineageCodes, all).stream().map(this::toFieldResponse).toList();
     }
 
     @Override
     public List<BusinessModuleExtFieldResponse> listFieldsByApplicationFunction(String moduleCode,
                                                                                  String applicationFunction,
                                                                                  String fieldScope) {
-        requireModule(moduleCode);
+        BusinessModule module = requireModule(moduleCode);
         if (!StringUtils.hasText(applicationFunction)) {
             throw new BusinessException("应用功能不能为空");
         }
         String fn = applicationFunction.trim();
-        LambdaQueryWrapper<BusinessModuleExtField> wrapper = new LambdaQueryWrapper<BusinessModuleExtField>()
-                .eq(BusinessModuleExtField::getModuleCode, moduleCode)
+        String normalizedScope = StringUtils.hasText(fieldScope) ? fieldScope.trim().toUpperCase() : null;
+        List<String> lineageCodes = resolveLineageModuleCodes(module);
+        List<BusinessModuleExtField> all = extFieldMapper.selectList(new LambdaQueryWrapper<BusinessModuleExtField>()
+                .in(BusinessModuleExtField::getModuleCode, lineageCodes)
                 .eq(BusinessModuleExtField::getDeleteFlag, "N")
+                .eq(StringUtils.hasText(normalizedScope), BusinessModuleExtField::getFieldScope, normalizedScope)
                 .orderByAsc(BusinessModuleExtField::getSortOrder)
-                .orderByAsc(BusinessModuleExtField::getFieldCode);
-        if (StringUtils.hasText(fieldScope)) {
-            wrapper.eq(BusinessModuleExtField::getFieldScope, fieldScope.trim().toUpperCase());
-        }
-        return extFieldMapper.selectList(wrapper).stream()
+                .orderByAsc(BusinessModuleExtField::getFieldCode));
+        return resolveEffectiveInheritedFields(lineageCodes, all).stream()
                 .filter(entity -> parseApplicationFunctions(entity.getApplicationFunctions()).contains(fn))
                 .map(this::toFieldResponse)
                 .toList();
+    }
+
+    @Override
+    public List<BusinessModuleExtField> listEffectivePendingArchiveBasicExtFields(String leafModuleCode) {
+        if (!StringUtils.hasText(leafModuleCode)) {
+            return List.of();
+        }
+        BusinessModule module = requireModule(leafModuleCode.trim());
+        List<String> lineageCodes = resolveLineageModuleCodes(module);
+        List<BusinessModuleExtField> all = extFieldMapper.selectList(new LambdaQueryWrapper<BusinessModuleExtField>()
+            .in(BusinessModuleExtField::getModuleCode, lineageCodes)
+            .eq(BusinessModuleExtField::getDeleteFlag, "N")
+            .eq(BusinessModuleExtField::getEnabledFlag, "Y")
+            .eq(BusinessModuleExtField::getFieldScope, "BASIC")
+            .orderByAsc(BusinessModuleExtField::getSortOrder)
+            .orderByAsc(BusinessModuleExtField::getFieldCode));
+        if (all == null) {
+            return List.of();
+        }
+        return resolveEffectiveInheritedFields(lineageCodes, all).stream()
+            .filter(entity -> parseApplicationFunctions(entity.getApplicationFunctions()).contains("应归档数据"))
+            .toList();
+    }
+
+    @Override
+    public List<BusinessModuleExtFieldResponse> listPendingArchiveBasicExtFieldsUnionUnderDocumentType(String documentTypeRootCode) {
+        if (!StringUtils.hasText(documentTypeRootCode)) {
+            throw new BusinessException("documentTypeRootCode cannot be blank");
+        }
+        String root = documentTypeRootCode.trim();
+        requireModule(root);
+        return resolvePendingArchiveBasicExtFieldsUnionEntities(root).stream().map(this::toFieldResponse).toList();
+    }
+
+    @Override
+    public List<BusinessModuleExtField> listPendingArchiveBasicExtFieldEntitiesUnionUnderDocumentType(String documentTypeRootCode) {
+        if (!StringUtils.hasText(documentTypeRootCode)) {
+            throw new BusinessException("documentTypeRootCode cannot be blank");
+        }
+        String root = documentTypeRootCode.trim();
+        requireModule(root);
+        return resolvePendingArchiveBasicExtFieldsUnionEntities(root);
+    }
+
+    /**
+     * 文档类型根下子树内「应归档数据」BASIC 字段按 canonical 键去重（层级浅者优先），与批量导入模板并集一致。
+     */
+    private List<BusinessModuleExtField> resolvePendingArchiveBasicExtFieldsUnionEntities(String rootCode) {
+        List<String> subtree = collectSelfAndDescendantModuleCodes(rootCode);
+        if (subtree.isEmpty()) {
+            return List.of();
+        }
+        Map<String, BusinessModule> moduleByCode = businessModuleMapper.selectList(new LambdaQueryWrapper<BusinessModule>()
+                .eq(BusinessModule::getDeleteFlag, "N"))
+            .stream()
+            .collect(Collectors.toMap(BusinessModule::getModuleCode, Function.identity(), (a, b) -> a));
+
+        List<BusinessModuleExtField> rows = extFieldMapper.selectList(new LambdaQueryWrapper<BusinessModuleExtField>()
+            .in(BusinessModuleExtField::getModuleCode, subtree)
+            .eq(BusinessModuleExtField::getFieldScope, "BASIC")
+            .eq(BusinessModuleExtField::getDeleteFlag, "N")
+            .eq(BusinessModuleExtField::getEnabledFlag, "Y")
+            .orderByAsc(BusinessModuleExtField::getSortOrder)
+            .orderByAsc(BusinessModuleExtField::getFieldCode));
+
+        List<BusinessModuleExtField> candidates = rows.stream()
+            .filter(f -> parseApplicationFunctions(f.getApplicationFunctions()).contains("应归档数据"))
+            .sorted(Comparator
+                .comparing((BusinessModuleExtField f) -> levelNumOf(moduleByCode, f.getModuleCode()))
+                .thenComparing(f -> f.getSortOrder() == null ? 0 : f.getSortOrder())
+                .thenComparing(BusinessModuleExtField::getFieldCode))
+            .toList();
+
+        Map<String, BusinessModuleExtField> byCanonical = new LinkedHashMap<>();
+        for (BusinessModuleExtField f : candidates) {
+            String canonical = canonicalBusinessExtKey(f);
+            if (!StringUtils.hasText(canonical)) {
+                continue;
+            }
+            byCanonical.putIfAbsent(canonical, f);
+        }
+        return byCanonical.values().stream()
+            .sorted(Comparator
+                .comparing((BusinessModuleExtField f) -> levelNumOf(moduleByCode, f.getModuleCode()))
+                .thenComparing(f -> f.getSortOrder() == null ? 0 : f.getSortOrder())
+                .thenComparing(BusinessModuleExtField::getFieldCode))
+            .toList();
+    }
+
+    private static int levelNumOf(Map<String, BusinessModule> moduleByCode, String moduleCode) {
+        BusinessModule m = moduleByCode.get(moduleCode);
+        if (m == null || m.getLevelNum() == null) {
+            return Integer.MAX_VALUE;
+        }
+        return m.getLevelNum();
+    }
+
+    private static String canonicalBusinessExtKey(BusinessModuleExtField f) {
+        if (f == null) {
+            return "";
+        }
+        String en = f.getEnglishFieldName() != null ? f.getEnglishFieldName().trim() : "";
+        if (StringUtils.hasText(en)) {
+            return en;
+        }
+        return f.getFieldCode() != null ? f.getFieldCode().trim() : "";
+    }
+
+    /**
+     * 自根节点起的子树前序（按 sortOrder、moduleCode 稳定遍历子节点）。
+     */
+    private List<String> collectSelfAndDescendantModuleCodes(String rootCode) {
+        List<BusinessModule> all = businessModuleMapper.selectList(new LambdaQueryWrapper<BusinessModule>()
+            .eq(BusinessModule::getDeleteFlag, "N"));
+        Map<String, List<BusinessModule>> childrenByParent = new HashMap<>();
+        Set<String> codes = new HashSet<>();
+        for (BusinessModule m : all) {
+            codes.add(m.getModuleCode());
+            String pk = StringUtils.hasText(m.getParentCode()) ? m.getParentCode().trim() : "";
+            childrenByParent.computeIfAbsent(pk, k -> new ArrayList<>()).add(m);
+        }
+        if (!codes.contains(rootCode)) {
+            return List.of();
+        }
+        for (List<BusinessModule> kids : childrenByParent.values()) {
+            kids.sort(Comparator.comparing(BusinessModule::getSortOrder, Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(BusinessModule::getModuleCode));
+        }
+        List<String> order = new ArrayList<>();
+        ArrayDeque<String> q = new ArrayDeque<>();
+        q.add(rootCode);
+        Set<String> seen = new HashSet<>();
+        while (!q.isEmpty()) {
+            String cur = q.poll();
+            if (!seen.add(cur)) {
+                continue;
+            }
+            order.add(cur);
+            List<BusinessModule> kids = childrenByParent.get(cur);
+            if (kids == null) {
+                continue;
+            }
+            for (BusinessModule ch : kids) {
+                q.add(ch.getModuleCode());
+            }
+        }
+        return order;
     }
 
     @Override
@@ -205,30 +387,30 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
     public BusinessModuleExtFieldResponse createField(String moduleCode, BusinessModuleExtFieldCommand command) {
         requireModule(moduleCode);
         validateField(command);
+        String normalizedScope = command.getFieldScope().trim().toUpperCase();
+        String normalizedAttribute = normalizeExtAttribute(command.getExtAttribute(), command.getFieldScope(), command.getDataType());
+        FieldSemanticReference semanticReference = resolveSemanticReference(
+                normalizedScope,
+                normalizedAttribute,
+                null,
+                command.getFieldName(),
+                command.getEnglishFieldName());
         List<String> functions = normalizeApplicationFunctionList(command.getApplicationFunctions());
-        BusinessModuleExtField first = null;
-        for (int i = 0; i < functions.size(); i++) {
-            String function = functions.get(i);
-            String fieldCode = (i == 0)
-                    ? command.getFieldCode().trim()
-                    : buildDerivedFieldCode(command.getFieldCode().trim(), function);
-            ensureFieldCodeAvailable(fieldCode);
+        String primaryFunction = functions.isEmpty() ? "EXT" : functions.get(0);
+        String requestedFieldCode = command.getFieldCode().trim();
+        String fieldCode = resolveFieldCodeForCreate(requestedFieldCode, primaryFunction, semanticReference.reused());
 
-            BusinessModuleExtField entity = new BusinessModuleExtField();
-            entity.setFieldCode(fieldCode);
-            entity.setModuleCode(moduleCode);
-            applyField(entity, command, List.of(function));
-            entity.setDeleteFlag("N");
-            entity.setCreatedBy(SYSTEM_OPERATOR_ID);
-            entity.setCreationDate(LocalDateTime.now());
-            entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
-            entity.setLastUpdateDate(LocalDateTime.now());
-            extFieldMapper.insert(entity);
-            if (first == null) {
-                first = entity;
-            }
-        }
-        return toFieldResponse(first);
+        BusinessModuleExtField entity = new BusinessModuleExtField();
+        entity.setFieldCode(fieldCode);
+        entity.setModuleCode(moduleCode);
+        applyField(entity, command, functions, semanticReference);
+        entity.setDeleteFlag("N");
+        entity.setCreatedBy(SYSTEM_OPERATOR_ID);
+        entity.setCreationDate(LocalDateTime.now());
+        entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
+        entity.setLastUpdateDate(LocalDateTime.now());
+        extFieldMapper.insert(entity);
+        return toFieldResponse(entity);
     }
 
     @Override
@@ -240,7 +422,15 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         if (!fieldCode.equals(command.getFieldCode().trim())) {
             throw new BusinessException("字段编码不允许修改");
         }
-        applyField(entity, command, command.getApplicationFunctions());
+        String normalizedScope = command.getFieldScope().trim().toUpperCase();
+        String normalizedAttribute = normalizeExtAttribute(command.getExtAttribute(), command.getFieldScope(), command.getDataType());
+        FieldSemanticReference semanticReference = resolveSemanticReference(
+                normalizedScope,
+                normalizedAttribute,
+                entity.getFieldId(),
+                command.getFieldName(),
+                command.getEnglishFieldName());
+        applyField(entity, command, command.getApplicationFunctions(), semanticReference);
         entity.setLastUpdatedBy(SYSTEM_OPERATOR_ID);
         entity.setLastUpdateDate(LocalDateTime.now());
         extFieldMapper.updateById(entity);
@@ -258,12 +448,20 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
                 .set(BusinessModuleExtField::getLastUpdateDate, LocalDateTime.now()));
     }
 
-    private void applyField(BusinessModuleExtField entity, BusinessModuleExtFieldCommand command, List<String> applicationFunctions) {
+    private void applyField(BusinessModuleExtField entity,
+                            BusinessModuleExtFieldCommand command,
+                            List<String> applicationFunctions,
+                            FieldSemanticReference semanticReference) {
         entity.setFieldScope(command.getFieldScope().trim().toUpperCase());
         entity.setApplicationFunctions(normalizeApplicationFunctions(applicationFunctions));
         entity.setExtAttribute(normalizeExtAttribute(command.getExtAttribute(), command.getFieldScope(), command.getDataType()));
-        entity.setFieldName(command.getFieldName().trim());
-        entity.setEnglishFieldName(trimToNull(command.getEnglishFieldName()));
+        if (semanticReference.reused()) {
+            entity.setFieldName(semanticReference.fieldName());
+            entity.setEnglishFieldName(semanticReference.englishFieldName());
+        } else {
+            entity.setFieldName(command.getFieldName().trim());
+            entity.setEnglishFieldName(trimToNull(command.getEnglishFieldName()));
+        }
         entity.setDataType(command.getDataType().trim().toUpperCase());
         entity.setQueryFlag(normalizeFlag(command.getQueryFlag(), "N"));
         entity.setRequiredFlag(normalizeFlag(command.getRequiredFlag(), "N"));
@@ -495,6 +693,46 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         }
     }
 
+    private String resolveFieldCodeForCreate(String requestedFieldCode, String applicationFunction, boolean allowAutoDerive) {
+        Long count = extFieldMapper.selectCount(new LambdaQueryWrapper<BusinessModuleExtField>()
+                .eq(BusinessModuleExtField::getFieldCode, requestedFieldCode)
+                .eq(BusinessModuleExtField::getDeleteFlag, "N"));
+        if (count == 0) {
+            return requestedFieldCode;
+        }
+        if (!allowAutoDerive) {
+            throw new BusinessException("字段编码已存在");
+        }
+        return buildDerivedFieldCode(requestedFieldCode, applicationFunction);
+    }
+
+    private FieldSemanticReference resolveSemanticReference(String fieldScope,
+                                                            String extAttribute,
+                                                            Long excludeFieldId,
+                                                            String requestedFieldName,
+                                                            String requestedEnglishFieldName) {
+        BusinessModuleExtField existing = extFieldMapper.selectOne(new LambdaQueryWrapper<BusinessModuleExtField>()
+                .eq(BusinessModuleExtField::getFieldScope, fieldScope)
+                .eq(BusinessModuleExtField::getExtAttribute, extAttribute)
+                .eq(BusinessModuleExtField::getDeleteFlag, "N")
+                .ne(excludeFieldId != null, BusinessModuleExtField::getFieldId, excludeFieldId)
+                .orderByAsc(BusinessModuleExtField::getCreationDate)
+                .orderByAsc(BusinessModuleExtField::getFieldId)
+                .last("limit 1"));
+        if (existing == null) {
+            return new FieldSemanticReference(false, null, null);
+        }
+        String fixedFieldName = existing.getFieldName() == null ? "" : existing.getFieldName().trim();
+        String fixedEnglishFieldName = trimToNull(existing.getEnglishFieldName());
+        String requestedName = trimToNull(requestedFieldName);
+        String requestedEnglishName = trimToNull(requestedEnglishFieldName);
+        if (!fixedFieldName.equals(requestedName == null ? "" : requestedName)
+                || !java.util.Objects.equals(fixedEnglishFieldName, requestedEnglishName)) {
+            throw new BusinessException("扩展字段语义冲突：同一扩展字段只能定义一套字段名/字段编码");
+        }
+        return new FieldSemanticReference(true, fixedFieldName, fixedEnglishFieldName);
+    }
+
     private boolean hasChildren(String moduleCode) {
         return businessModuleMapper.selectCount(new LambdaQueryWrapper<BusinessModule>()
                 .eq(BusinessModule::getParentCode, moduleCode)
@@ -603,6 +841,8 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         return normalized;
     }
 
+    private record FieldSemanticReference(boolean reused, String fieldName, String englishFieldName) {}
+
     private Set<String> resolveAllowedAttributes(String fieldScope, String dataType) {
         String scope = StringUtils.hasText(fieldScope) ? fieldScope.trim().toUpperCase() : "";
         String type = StringUtils.hasText(dataType) ? dataType.trim().toUpperCase() : "";
@@ -639,12 +879,146 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
+    private List<String> resolveLineageModuleCodes(BusinessModule module) {
+        List<String> codes = new ArrayList<>();
+        codes.add(module.getModuleCode());
+        if (StringUtils.hasText(module.getAncestorPath())) {
+            List<String> ancestors = List.of(module.getAncestorPath().split("/")).stream()
+                    .map(String::trim)
+                    .filter(StringUtils::hasText)
+                    .toList();
+            for (int i = ancestors.size() - 1; i >= 0; i--) {
+                if (isBusinessModuleCode(ancestors.get(i))) {
+                    codes.add(ancestors.get(i));
+                }
+            }
+        }
+        return codes;
+    }
+
+    private List<BusinessModuleExtField> resolveEffectiveInheritedFields(List<String> lineageCodes, List<BusinessModuleExtField> allFields) {
+        Map<String, Integer> priorityByModuleCode = new LinkedHashMap<>();
+        for (int i = 0; i < lineageCodes.size(); i++) {
+            priorityByModuleCode.put(lineageCodes.get(i), i);
+        }
+        Map<String, BusinessModuleExtField> effective = new LinkedHashMap<>();
+        allFields.stream()
+                .sorted(Comparator
+                        .comparingInt((BusinessModuleExtField f) -> priorityByModuleCode.getOrDefault(f.getModuleCode(), Integer.MAX_VALUE))
+                        .thenComparing(BusinessModuleExtField::getSortOrder)
+                        .thenComparing(BusinessModuleExtField::getFieldCode))
+                .forEach(field -> {
+                    String key = field.getFieldScope() + "::" + field.getExtAttribute();
+                    effective.putIfAbsent(key, field);
+                });
+        return effective.values().stream()
+                .sorted(Comparator
+                        .comparingInt((BusinessModuleExtField f) -> priorityByModuleCode.getOrDefault(f.getModuleCode(), Integer.MAX_VALUE))
+                        .thenComparing(BusinessModuleExtField::getSortOrder)
+                        .thenComparing(BusinessModuleExtField::getFieldCode))
+                .toList();
+    }
+
     private void sortTree(List<BusinessModuleNodeResponse> nodes) {
         nodes.sort(Comparator.comparing(BusinessModuleNodeResponse::getSortOrder).thenComparing(BusinessModuleNodeResponse::getModuleCode));
         nodes.forEach(node -> sortTree(node.getChildren()));
     }
 
-    private BusinessModuleNodeResponse toNode(BusinessModule entity, SecurityLevelDictionarySnapshot snapshot) {
+    private Map<String, BarcodeModule> loadBarcodeMapByCodes(Collection<String> rawCodes) {
+        if (rawCodes == null || rawCodes.isEmpty()) {
+            return Map.of();
+        }
+        List<String> codes = rawCodes.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(StringUtils::hasText)
+            .map(s -> s.toUpperCase(Locale.ROOT))
+            .distinct()
+            .toList();
+        if (codes.isEmpty()) {
+            return Map.of();
+        }
+        // PostgreSQL 区分大小写：须按 upper(trim(code)) 匹配，否则树节点无法带出条码名称、前台长期显示「未映射」
+        LambdaQueryWrapper<BarcodeModule> bmWhere = new LambdaQueryWrapper<BarcodeModule>()
+            .eq(BarcodeModule::getDeleteFlag, "N");
+        if (codes.size() == 1) {
+            bmWhere.apply("upper(trim(barcode_module_code)) = {0}", codes.get(0));
+        } else {
+            String placeholders = IntStream.range(0, codes.size())
+                .mapToObj(i -> "{" + i + "}")
+                .collect(Collectors.joining(","));
+            bmWhere.apply("upper(trim(barcode_module_code)) IN (" + placeholders + ")", codes.toArray());
+        }
+        List<BarcodeModule> list = barcodeModuleMapper.selectList(bmWhere);
+        return list.stream().collect(Collectors.toMap(
+            b -> b.getBarcodeCode().trim().toUpperCase(Locale.ROOT),
+            Function.identity(),
+            (a, b) -> a));
+    }
+
+    private static List<String> toBarcodeCodeList(String code) {
+        if (!StringUtils.hasText(code)) {
+            return List.of();
+        }
+        return List.of(code.trim().toUpperCase(Locale.ROOT));
+    }
+
+    private static String normalizeBarcodeModuleRef(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        return raw.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private void assertBarcodeModuleAssignable(String barcodeModuleCode) {
+        if (!StringUtils.hasText(barcodeModuleCode)) {
+            return;
+        }
+        String code = barcodeModuleCode.trim().toUpperCase(Locale.ROOT);
+        BarcodeModule b = barcodeModuleMapper.selectOne(new LambdaQueryWrapper<BarcodeModule>()
+            .eq(BarcodeModule::getDeleteFlag, "N")
+            .apply("upper(trim(barcode_module_code)) = {0}", code)
+            .last("limit 1"));
+        if (b == null) {
+            throw new BusinessException("条码模块不存在或已删除");
+        }
+        if (!"Y".equalsIgnoreCase(StringUtils.hasText(b.getEnableFlag()) ? b.getEnableFlag().trim() : "")) {
+            throw new BusinessException("条码模块已停用，无法配置到业务模块");
+        }
+    }
+
+    /**
+     * 仅最下层叶子业务模块（无下级业务模块）可映射条码模块。
+     */
+    private void assertBarcodeOnlyForLeafModule(String moduleCode, String barcodeModuleCode) {
+        if (!StringUtils.hasText(barcodeModuleCode)) {
+            return;
+        }
+        if (hasChildren(moduleCode)) {
+            throw new BusinessException("仅最下层叶子业务模块可配置条码模块，请先删除或调整下级模块后再试");
+        }
+    }
+
+    /** 当某模块已存在下级业务模块时，清除其条码映射（例如在其下新增子模块或调整上级后）。 */
+    private void clearBarcodeWhenModuleHasChildren(String moduleCode) {
+        if (!StringUtils.hasText(moduleCode)) {
+            return;
+        }
+        if (!hasChildren(moduleCode.trim())) {
+            return;
+        }
+        BusinessModule module = findModule(moduleCode.trim());
+        if (module == null || !StringUtils.hasText(module.getBarcodeModuleCode())) {
+            return;
+        }
+        businessModuleMapper.update(null, new LambdaUpdateWrapper<BusinessModule>()
+            .eq(BusinessModule::getId, module.getId())
+            .set(BusinessModule::getBarcodeModuleCode, null)
+            .set(BusinessModule::getLastUpdatedBy, SYSTEM_OPERATOR_ID)
+            .set(BusinessModule::getLastUpdateDate, LocalDateTime.now()));
+    }
+
+    private BusinessModuleNodeResponse toNode(BusinessModule entity, SecurityLevelDictionarySnapshot snapshot, Map<String, BarcodeModule> barcodeByCode) {
         BusinessModuleNodeResponse node = new BusinessModuleNodeResponse();
         node.setId(entity.getId());
         node.setModuleCode(entity.getModuleCode());
@@ -662,6 +1036,25 @@ public class BusinessModuleServiceImpl implements BusinessModuleService {
         node.setDescription(entity.getDescription());
         node.setRemark(entity.getRemark());
         node.setSortOrder(entity.getSortOrder());
+        String ref = StringUtils.hasText(entity.getBarcodeModuleCode())
+            ? entity.getBarcodeModuleCode().trim().toUpperCase(Locale.ROOT)
+            : null;
+        node.setBarcodeModuleCode(ref);
+        node.setBarcodeId(null);
+        node.setBarcodeCode(null);
+        node.setBarcodeName(null);
+        if (ref != null && barcodeByCode != null) {
+            BarcodeModule bm = barcodeByCode.get(ref);
+            if (bm != null) {
+                node.setBarcodeId(bm.getBarcodeId());
+                node.setBarcodeCode(bm.getBarcodeCode());
+                node.setBarcodeName(bm.getBarcodeName());
+            } else {
+                // 业务表已有编码但主数据未命中映射时仍展示编码，避免前台误认为「未映射」
+                node.setBarcodeCode(ref);
+                node.setBarcodeName("");
+            }
+        }
         node.setLastUpdatedBy(entity.getLastUpdatedBy());
         node.setLastUpdateDate(entity.getLastUpdateDate());
         return node;

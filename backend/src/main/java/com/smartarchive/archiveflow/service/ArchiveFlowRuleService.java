@@ -32,6 +32,12 @@ public interface ArchiveFlowRuleService {
 
     List<ArchiveFlowRuleOptionResponse> listCityOptions();
 
+    /**
+     * 按公司 + 业务模块返回可选归档地（仅默认且启用的规则）。
+     */
+    List<ArchiveFlowRuleOptionResponse> listMatchedArchiveDestinationOptions(String companyProjectCode,
+                                                                             String busiModuleCode);
+
     ArchiveFlowRulePermissionPreviewResponse getPermissionPreview();
 
     /**

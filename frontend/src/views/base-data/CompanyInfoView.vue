@@ -24,7 +24,7 @@
       <el-table :data="rows" border>
         <el-table-column prop="companyCode" label="公司编码" min-width="140" />
         <el-table-column prop="companyName" label="公司名称" min-width="180" />
-        <el-table-column prop="region" label="区域" min-width="120" />
+        <el-table-column prop="region" label="地区部" min-width="120" />
         <el-table-column prop="representativeOffice" label="代表处" min-width="120" />
         <el-table-column prop="country" label="国家" min-width="120" />
         <el-table-column label="标签" min-width="200">
@@ -55,7 +55,7 @@
         <el-form-item label="公司名称" required>
           <el-input v-model="form.companyName" />
         </el-form-item>
-        <el-form-item label="区域">
+        <el-form-item label="地区部">
           <el-input v-model="form.region" />
         </el-form-item>
         <el-form-item label="代表处">

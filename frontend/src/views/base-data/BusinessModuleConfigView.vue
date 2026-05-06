@@ -131,6 +131,10 @@
             <el-descriptions-item label="排序">{{ selectedNode.sortOrder }}</el-descriptions-item>
             <el-descriptions-item label="密级">{{ resolveSecurityLevelName(selectedNode.securityLevelCode || selectedNode.securityLevel || 'INTERNAL_PUBLIC') }}</el-descriptions-item>
             <el-descriptions-item label="集成类型">{{ selectedNode.integrationType || '不集成' }}</el-descriptions-item>
+            <el-descriptions-item label="条码模块">
+              <span>{{ selectedBarcodeDisplay }}</span>
+              <span v-if="selectedNode && !isLeafModuleNode(selectedNode)" class="leaf-barcode-hint">（仅叶子节点可配置；当前含下级模块）</span>
+            </el-descriptions-item>
             <el-descriptions-item label="启用标志">{{ selectedNode.enabledFlag === 'Y' ? '启用' : '停用' }}</el-descriptions-item>
             <el-descriptions-item label="修改人">{{ resolveUserDisplayById(selectedNode.lastUpdatedBy) }}</el-descriptions-item>
             <el-descriptions-item label="更新时间">{{ selectedNode.lastUpdateDate || '-' }}</el-descriptions-item>
@@ -215,7 +219,7 @@
             <el-table-column prop="sortOrder" label="排序" width="90" />
             <el-table-column label="操作" width="90" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openFieldDialog(row)">编辑</el-button>
+                <el-button link type="primary" :disabled="!canEditField(row)" @click="openFieldDialog(row)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -264,6 +268,23 @@
             <el-option label="不集成" value="不集成" />
           </el-select>
         </el-form-item>
+        <el-form-item label="条码模块">
+          <el-select
+            v-model="moduleForm.barcodeModuleCode"
+            clearable
+            filterable
+            :disabled="!isModuleFormLeaf"
+            :placeholder="isModuleFormLeaf ? '不映射请清空；同一条码模块可配置到多个叶子模块' : '仅最下层叶子节点（无下级业务模块）可配置条码'"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="b in barcodeOptions"
+              :key="b.barcodeCode"
+              :label="`${b.barcodeCode} ｜ ${b.barcodeName}${b.enableFlag === 'N' ? '（停用）' : ''}`"
+              :value="b.barcodeCode"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="启用标志"><el-radio-group v-model="moduleForm.enabledFlag"><el-radio value="Y">启用</el-radio><el-radio value="N">停用</el-radio></el-radio-group></el-form-item>
         <el-form-item label="描述"><el-input v-model="moduleForm.description" type="textarea" :rows="4" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="moduleForm.remark" type="textarea" :rows="3" /></el-form-item>
@@ -292,16 +313,22 @@
         </el-form-item>
         <el-form-item label="扩展字段" required>
           <el-select v-model="fieldForm.extAttribute" clearable placeholder="请先选择字段类型，再选择扩展字段">
-            <el-option v-for="item in availableExtAttributeOptions" :key="item" :label="item" :value="item" :disabled="isExtAttributeUsed(item)">
+            <el-option v-for="item in availableExtAttributeOptions" :key="item" :label="item" :value="item">
               <div class="ext-attribute-option">
                 <span>{{ item }}</span>
-                <el-tag v-if="isExtAttributeUsed(item)" size="small" type="warning" effect="light">已使用</el-tag>
+                <div class="ext-attribute-meta" v-if="isExtAttributeUsed(item)">
+                  <el-tag size="small" type="warning" effect="light">已使用</el-tag>
+                  <span class="ext-attribute-meta-text">{{ formatExtAttributeUsage(item) }}</span>
+                </div>
               </div>
             </el-option>
           </el-select>
+          <div class="field-semantic-hint">
+            同一扩展字段会复用字段名与字段编码；查询/必填/启用/排序可按业务模块单独配置。
+          </div>
         </el-form-item>
-        <el-form-item label="字段名" required><el-input v-model="fieldForm.fieldName" /></el-form-item>
-        <el-form-item label="字段编码" required><el-input v-model="fieldForm.englishFieldName" /></el-form-item>
+        <el-form-item label="字段名" required><el-input v-model="fieldForm.fieldName" :disabled="isFieldSemanticLocked" /></el-form-item>
+        <el-form-item label="字段编码" required><el-input v-model="fieldForm.englishFieldName" :disabled="isFieldSemanticLocked" /></el-form-item>
         <div class="field-options">
           <el-form-item label="查询"><el-switch v-model="fieldForm.queryFlag" active-value="Y" inactive-value="N" /></el-form-item>
           <el-form-item label="必填"><el-switch v-model="fieldForm.requiredFlag" active-value="Y" inactive-value="N" /></el-form-item>
@@ -330,12 +357,14 @@ import {
   updateBusinessModuleExtField,
   type BusinessModuleCommand,
   type BusinessModuleExtFieldCommand,
-  type BusinessModuleParentOption
+  type BusinessModuleParentOption,
+  type BusinessModuleUpdateCommand
 } from '../../api/modules/businessModule'
+import { fetchBarcodeModules } from '../../api/modules/barcodeModule'
 import { fetchDictionaryItems } from '../../api/modules/dictionary'
 import { fetchUsers } from '../../api/modules/security'
 import { fetchDocumentTypeTree } from '../../api/modules/documentType'
-import type { BusinessModuleExtField, BusinessModuleNode, DocumentTypeTreeNode } from '../../types'
+import type { BarcodeModule, BusinessModuleExtField, BusinessModuleNode, DocumentTypeTreeNode } from '../../types'
 
 type FieldQueryState = {
   applicationFunctions: string[]
@@ -356,6 +385,7 @@ const securityLevelOptions = ref<Array<{ code: string; name: string }>>([])
 const userDisplayById = ref<Record<number, string>>({})
 const fields = ref<BusinessModuleExtField[]>([])
 const usedExtAttributes = ref<Set<string>>(new Set())
+const extAttributeDefinitionMap = ref<Record<string, { fieldName: string; englishFieldName: string; moduleCode: string; fieldCode: string }>>({})
 const areModuleNodesExpanded = ref(true)
 const activeScope = ref<'BASIC' | 'ATTACHMENT'>('BASIC')
 const moduleDialogVisible = ref(false)
@@ -364,15 +394,27 @@ const moduleMode = ref<'create' | 'edit'>('create')
 const fieldMode = ref<'create' | 'edit'>('create')
 const editingFieldCode = ref('')
 
-const moduleForm = reactive<BusinessModuleCommand>({ moduleCode: '', moduleName: '', parentCode: '', enabledFlag: 'Y', sortOrder: 1, securityLevelCode: 'INTERNAL_PUBLIC', integrationType: '不集成', description: '', remark: '' })
+const barcodeOptions = ref<BarcodeModule[]>([])
+const moduleForm = reactive<BusinessModuleCommand>({
+  moduleCode: '',
+  moduleName: '',
+  parentCode: '',
+  enabledFlag: 'Y',
+  sortOrder: 1,
+  securityLevelCode: 'INTERNAL_PUBLIC',
+  integrationType: '不集成',
+  description: '',
+  remark: '',
+  barcodeModuleCode: undefined as string | undefined
+})
 const fieldForm = reactive<BusinessModuleExtFieldCommand>({ fieldCode: '', fieldScope: 'BASIC', applicationFunctions: [], extAttribute: undefined, fieldName: '', englishFieldName: '', dataType: 'TEXT', queryFlag: 'N', requiredFlag: 'N', enabledFlag: 'Y', sortOrder: 1 })
 const applicationFunctionOptions = ['应归档数据', '移交'] as const
 const buildAttrRange = (prefix: string, start: number, end: number) =>
   Array.from({ length: end - start + 1 }, (_, index) => `${prefix}${start + index}`)
-const BASIC_TEXT_ATTRS = buildAttrRange('ATTR', 1, 40)
-const BASIC_NUMBER_ATTRS = buildAttrRange('ATTR', 41, 60)
-const BASIC_DATE_ATTRS = buildAttrRange('ATTR', 61, 80)
-const BASIC_DATETIME_ATTRS = buildAttrRange('ATTR', 81, 100)
+const BASIC_TEXT_ATTRS = buildAttrRange('ATTR', 1, 50)
+const BASIC_NUMBER_ATTRS = buildAttrRange('ATTR', 51, 80)
+const BASIC_DATE_ATTRS = buildAttrRange('ATTR', 81, 90)
+const BASIC_DATETIME_ATTRS = buildAttrRange('ATTR', 91, 100)
 const ATTACHMENT_TEXT_ATTRS = buildAttrRange('ATTRIBUTE', 1, 20)
 const ATTACHMENT_NUMBER_ATTRS = buildAttrRange('ATTRIBUTE', 21, 30)
 const ATTACHMENT_DATE_ATTRS = buildAttrRange('ATTRIBUTE', 31, 40)
@@ -395,6 +437,31 @@ const fieldQuery = reactive<FieldQueryState>(createEmptyFieldQuery())
 const moduleImportExportHeaders = ['业务模块编码', '业务模块名称', '上级业务模块编码', '层级', '排序', '密级', '集成类型', '启用标志', '描述', '备注', '更新时间'] as const
 
 const flatten = (nodes: BusinessModuleNode[]): BusinessModuleNode[] => nodes.flatMap(node => [node, ...flatten(node.children || [])])
+
+/** PUT/POST 返回的节点可能与随后 GET /tree 不一致；用保存结果覆盖条码字段，避免详情立刻被树数据冲成「未映射」 */
+function overlayBarcodeFields(base: BusinessModuleNode, saved: BusinessModuleNode): BusinessModuleNode {
+  const out = { ...base }
+  const keys = ['barcodeModuleCode', 'barcodeCode', 'barcodeName', 'barcodeId'] as const
+  for (const k of keys) {
+    if (k in saved) {
+      ;(out as Record<string, unknown>)[k] = (saved as Record<string, unknown>)[k]
+    }
+  }
+  return out
+}
+
+function patchTreeBarcodeFields(nodes: BusinessModuleNode[], moduleCode: string, saved: BusinessModuleNode): BusinessModuleNode[] {
+  return nodes.map((node) => {
+    if (node.moduleCode === moduleCode) {
+      return overlayBarcodeFields(node, saved)
+    }
+    const ch = node.children
+    if (ch && ch.length) {
+      return { ...node, children: patchTreeBarcodeFields(ch, moduleCode, saved) }
+    }
+    return node
+  })
+}
 const treeData = computed(() => filterModuleTree(rawTreeData.value))
 const pagedTreeData = computed(() => {
   const start = (treePagination.currentPage - 1) * treePagination.pageSize
@@ -427,6 +494,41 @@ const parentOptions = computed(() => parentOptionSource.value.filter(item => {
 const flattenDocumentTypes = (nodes: DocumentTypeTreeNode[]): DocumentTypeTreeNode[] => nodes.flatMap(node => [node, ...flattenDocumentTypes(node.children || [])])
 const documentTypeOptions = computed(() => flattenDocumentTypes(documentTypeTree.value).filter(item => item.enabledFlag === 'Y'))
 const isRootModuleCreate = computed(() => moduleMode.value === 'create' && !moduleForm.parentCode)
+const selectedBarcodeDisplay = computed(() => {
+  const n = selectedNode.value
+  if (!n) return '-'
+  if (n.barcodeCode || n.barcodeName) {
+    return `${n.barcodeCode || ''} ｜ ${n.barcodeName || ''}`.trim()
+  }
+  const fallback = String(n.barcodeModuleCode || '').trim()
+  if (fallback) {
+    const hit = barcodeOptions.value.find(
+      (b) => String(b.barcodeCode || '').trim().toUpperCase() === fallback.toUpperCase()
+    )
+    if (hit) return `${hit.barcodeCode} ｜ ${hit.barcodeName}`
+    return `${fallback} ｜ （名称未加载）`
+  }
+  return '未映射'
+})
+
+/** 无下级业务模块的叶子节点才可配置条码模块 */
+function isLeafModuleNode(node: BusinessModuleNode): boolean {
+  return !(node.children && node.children.length > 0)
+}
+
+/** 弹窗内：新增模块在保存前视为叶子；编辑时优先用左侧选中节点判断是否为叶子（与树查找一致，避免误判为非叶子导致保存时强制清空条码） */
+const isModuleFormLeaf = computed(() => {
+  if (moduleMode.value === 'create') return true
+  const code = String(moduleForm.moduleCode || '').trim()
+  if (
+    selectedNode.value &&
+    String(selectedNode.value.moduleCode || '').trim() === code
+  ) {
+    return isLeafModuleNode(selectedNode.value)
+  }
+  const node = flatten(rawTreeData.value).find((n) => String(n.moduleCode || '').trim() === code)
+  return node ? isLeafModuleNode(node) : true
+})
 const flagText = (flag: string) => flag === 'Y' ? '是' : '否'
 const filteredFields = computed(() => fields.value.filter(field => {
   const appMatched = !fieldQuery.applicationFunctions.length || fieldQuery.applicationFunctions.some(item => field.applicationFunctions?.includes(item as '应归档数据' | '移交'))
@@ -452,6 +554,17 @@ const availableExtAttributeOptions = computed(() => {
   if (fieldForm.dataType === 'DATE') return ATTACHMENT_DATE_ATTRS
   if (fieldForm.dataType === 'DATETIME') return ATTACHMENT_DATETIME_ATTRS
   return ATTACHMENT_TEXT_ATTRS
+})
+const currentAttributeDefinition = computed(() => {
+  if (!fieldForm.extAttribute) return null
+  const key = buildAttributeDefinitionKey(fieldForm.fieldScope, fieldForm.extAttribute)
+  return extAttributeDefinitionMap.value[key] || null
+})
+const isFieldSemanticLocked = computed(() => {
+  const current = currentAttributeDefinition.value
+  if (!current) return false
+  if (fieldMode.value === 'edit' && current.fieldCode === editingFieldCode.value) return false
+  return true
 })
 const pagedFields = computed(() => {
   const start = (fieldPagination.currentPage - 1) * fieldPagination.pageSize
@@ -493,7 +606,24 @@ function handleModuleQueryCodesChange(value: string[]) {
 }
 
 function isExtAttributeUsed(attribute: string) {
-  return usedExtAttributes.value.has(attribute)
+  return usedExtAttributes.value.has(buildAttributeDefinitionKey(fieldForm.fieldScope, attribute))
+}
+
+function canEditField(field: BusinessModuleExtField) {
+  return Boolean(selectedNode.value && field.moduleCode === selectedNode.value.moduleCode)
+}
+
+function buildAttributeDefinitionKey(fieldScope: string, extAttribute: string) {
+  return `${fieldScope.trim().toUpperCase()}::${extAttribute.trim().toUpperCase()}`
+}
+
+function formatExtAttributeUsage(attribute: string) {
+  const key = buildAttributeDefinitionKey(fieldForm.fieldScope, attribute)
+  const definition = extAttributeDefinitionMap.value[key]
+  if (!definition) return ''
+  const label = `${definition.fieldName} / ${definition.englishFieldName || '-'}`
+  const moduleLabel = formatModuleLabel(definition.moduleCode)
+  return `${label}（${moduleLabel}）`
 }
 
 function isDescendantModule(candidate: BusinessModuleNode, moduleCode?: string) {
@@ -567,12 +697,24 @@ function handleFieldPageChange() {
   normalizeFieldCurrentPage()
 }
 
-async function loadTree() {
+async function loadTree(savedAfterMutation?: BusinessModuleNode) {
   const [tree, options] = await Promise.all([fetchBusinessModuleTree(), fetchBusinessModuleParentOptions()])
-  rawTreeData.value = tree
+  let nextTree = tree
+  const patchCode = savedAfterMutation?.moduleCode?.trim()
+  if (patchCode && savedAfterMutation) {
+    nextTree = patchTreeBarcodeFields(tree, patchCode, savedAfterMutation)
+  }
+  rawTreeData.value = nextTree
   parentOptionSource.value = options
   normalizeTreeCurrentPage()
   await syncSelectedNodeWithFilteredTree()
+  if (patchCode && savedAfterMutation) {
+    const base = flatten(rawTreeData.value).find((n) => n.moduleCode === patchCode)
+    if (base) {
+      selectedNode.value = overlayBarcodeFields(base, savedAfterMutation)
+      hasManualModuleSelection.value = true
+    }
+  }
 }
 
 async function loadSecurityLevels() {
@@ -594,13 +736,25 @@ async function loadUserDisplays() {
 }
 
 async function syncSelectedNodeWithFilteredTree() {
-  const nodes = flatten(treeData.value)
-  const syncedSelection = selectedNode.value ? nodes.find(item => item.moduleCode === selectedNode.value?.moduleCode) : undefined
-  if (hasManualModuleSelection.value && selectedNode.value && !syncedSelection) {
+  const rawNodes = flatten(rawTreeData.value)
+  const visibleNodes = flatten(treeData.value)
+  const prevCode = selectedNode.value?.moduleCode
+
+  let next: BusinessModuleNode | undefined
+  if (prevCode) {
+    next = rawNodes.find(item => item.moduleCode === prevCode)
+  }
+  if (hasManualModuleSelection.value && selectedNode.value && prevCode && !next) {
     hasManualModuleSelection.value = false
   }
-  selectedNode.value = syncedSelection || nodes[0]
-  if (!selectedNode.value) selectedNode.value = nodes[0]
+  if (!next && visibleNodes.length) {
+    const firstVisible = visibleNodes[0]
+    next = rawNodes.find(item => item.moduleCode === firstVisible.moduleCode) || firstVisible
+  }
+  if (!next) {
+    next = rawNodes[0]
+  }
+  selectedNode.value = next
   await loadFields()
 }
 
@@ -658,18 +812,29 @@ async function loadFields() {
 }
 
 async function loadUsedExtAttributes() {
-  if (!selectedNode.value) {
+  if (!rawTreeData.value.length) {
     usedExtAttributes.value = new Set()
+    extAttributeDefinitionMap.value = {}
     return
   }
-  const relatedCodes = getRelatedModuleCodes(selectedNode.value)
-  const fieldGroups = await Promise.all(relatedCodes.map(moduleCode => fetchBusinessModuleExtFields(moduleCode, activeScope.value)))
-  usedExtAttributes.value = new Set(
-    fieldGroups
-      .flat()
-      .map(field => field.extAttribute)
-      .filter((attribute): attribute is string => Boolean(attribute))
-  )
+  const moduleCodes = flatten(rawTreeData.value).map(item => item.moduleCode)
+  const fieldGroups = await Promise.all(moduleCodes.map(moduleCode => fetchBusinessModuleExtFields(moduleCode, activeScope.value)))
+  const definitionMap: Record<string, { fieldName: string; englishFieldName: string; moduleCode: string; fieldCode: string }> = {}
+  fieldGroups
+    .flat()
+    .forEach((field) => {
+      if (!field.extAttribute) return
+      const key = buildAttributeDefinitionKey(field.fieldScope, field.extAttribute)
+      if (definitionMap[key]) return
+      definitionMap[key] = {
+        fieldName: field.fieldName || '',
+        englishFieldName: field.englishFieldName || '',
+        moduleCode: field.moduleCode,
+        fieldCode: field.fieldCode
+      }
+    })
+  extAttributeDefinitionMap.value = definitionMap
+  usedExtAttributes.value = new Set(Object.keys(definitionMap))
 }
 
 function getRelatedModuleCodes(node: BusinessModuleNode) {
@@ -716,6 +881,19 @@ function resetModuleForm(parentCode = '') {
   moduleForm.integrationType = '不集成'
   moduleForm.description = ''
   moduleForm.remark = ''
+  moduleForm.barcodeModuleCode = undefined
+}
+
+/** 须包含已停用条码：否则 el-select 找不到当前映射值会清空 v-model，保存时误传 null */
+async function loadBarcodeOptions() {
+  try {
+    barcodeOptions.value = await fetchBarcodeModules()
+  } catch {
+    // 二次打开弹窗时会再次请求；失败时勿清空选项，否则下拉无选项会清空已选条码导致保存丢失映射
+    if (!barcodeOptions.value.length) {
+      barcodeOptions.value = []
+    }
+  }
 }
 
 function formatModuleCsvRow(module: BusinessModuleNode) {
@@ -873,9 +1051,10 @@ function openAddModuleDialog() {
   openModuleDialog(hasManualModuleSelection.value ? selectedNode.value?.moduleCode || '' : '')
 }
 
-function openEditDialog() {
+async function openEditDialog() {
   if (!selectedNode.value) return
   moduleMode.value = 'edit'
+  await loadBarcodeOptions()
   moduleForm.moduleCode = selectedNode.value.moduleCode
   moduleForm.moduleName = selectedNode.value.moduleName
   moduleForm.parentCode = selectedNode.value.parentCode || ''
@@ -885,20 +1064,65 @@ function openEditDialog() {
   moduleForm.integrationType = selectedNode.value.integrationType || '不集成'
   moduleForm.description = selectedNode.value.description || ''
   moduleForm.remark = selectedNode.value.remark || ''
+  moduleForm.barcodeModuleCode =
+    isLeafModuleNode(selectedNode.value) &&
+    (selectedNode.value.barcodeModuleCode || selectedNode.value.barcodeCode)
+      ? String(selectedNode.value.barcodeModuleCode || selectedNode.value.barcodeCode || '').trim() || undefined
+      : undefined
   moduleDialogVisible.value = true
 }
 
 async function saveModule() {
   if (!moduleForm.moduleName.trim()) return ElMessage.warning('请输入业务模块名称')
   if (moduleMode.value === 'create' && !moduleForm.moduleCode.trim()) return ElMessage.warning('请输入业务模块编码')
-  if (moduleMode.value === 'create') {
-    selectedNode.value = await createBusinessModule({ ...moduleForm, moduleCode: moduleForm.moduleCode.trim(), moduleName: moduleForm.moduleName.trim(), parentCode: moduleForm.parentCode || undefined })
+  let barcodeModuleCode: string | null | undefined
+  if (moduleMode.value === 'edit' && !isModuleFormLeaf.value) {
+    barcodeModuleCode = null
+  } else if (moduleForm.barcodeModuleCode != null && String(moduleForm.barcodeModuleCode).trim() !== '') {
+    barcodeModuleCode = String(moduleForm.barcodeModuleCode).trim().toUpperCase()
   } else {
-    selectedNode.value = await updateBusinessModule(moduleForm.moduleCode, { moduleName: moduleForm.moduleName.trim(), parentCode: moduleForm.parentCode || undefined, enabledFlag: moduleForm.enabledFlag, sortOrder: moduleForm.sortOrder, securityLevelCode: moduleForm.securityLevelCode, integrationType: moduleForm.integrationType, description: moduleForm.description, remark: moduleForm.remark })
+    barcodeModuleCode = moduleMode.value === 'edit' ? null : undefined
   }
-  moduleDialogVisible.value = false
-  await loadTree()
-  ElMessage.success('保存成功')
+  /** 非叶子编辑必须写回条码为 null；叶子节点仅在用户操作过下拉（含清空）时 patch，避免 undefined 误传 null 清空库 */
+  const patchBarcodeModuleCode =
+    moduleMode.value === 'create'
+      ? undefined
+      : !isModuleFormLeaf.value || moduleForm.barcodeModuleCode !== undefined
+  try {
+    let savedNode: BusinessModuleNode
+    if (moduleMode.value === 'create') {
+      savedNode = await createBusinessModule({
+        ...moduleForm,
+        moduleCode: moduleForm.moduleCode.trim(),
+        moduleName: moduleForm.moduleName.trim(),
+        parentCode: moduleForm.parentCode || undefined,
+        barcodeModuleCode: barcodeModuleCode ?? undefined
+      })
+      selectedNode.value = savedNode
+    } else {
+      const updateBody: BusinessModuleUpdateCommand = {
+        moduleName: moduleForm.moduleName.trim(),
+        parentCode: moduleForm.parentCode || undefined,
+        enabledFlag: moduleForm.enabledFlag,
+        sortOrder: moduleForm.sortOrder,
+        securityLevelCode: moduleForm.securityLevelCode,
+        integrationType: moduleForm.integrationType,
+        description: moduleForm.description,
+        remark: moduleForm.remark,
+        patchBarcodeModuleCode
+      }
+      if (patchBarcodeModuleCode) {
+        updateBody.barcodeModuleCode = barcodeModuleCode ?? null
+      }
+      savedNode = await updateBusinessModule(moduleForm.moduleCode, updateBody)
+      selectedNode.value = savedNode
+    }
+    moduleDialogVisible.value = false
+    await loadTree(savedNode)
+    ElMessage.success('保存成功')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  }
 }
 
 async function removeModule() {
@@ -936,8 +1160,18 @@ watch(
   }
 )
 
+watch(
+  () => [fieldForm.extAttribute, fieldForm.fieldScope, fieldMode.value, editingFieldCode.value],
+  () => {
+    if (!isFieldSemanticLocked.value || !currentAttributeDefinition.value) return
+    fieldForm.fieldName = currentAttributeDefinition.value.fieldName || ''
+    fieldForm.englishFieldName = currentAttributeDefinition.value.englishFieldName || ''
+  }
+)
+
 function openFieldDialog(field?: BusinessModuleExtField) {
   if (!selectedNode.value) return ElMessage.warning('请先选择业务模块')
+  if (field && !canEditField(field)) return ElMessage.warning('继承字段请前往来源业务模块维护')
   fieldMode.value = field ? 'edit' : 'create'
   resetFieldForm()
   if (field) {
@@ -989,8 +1223,12 @@ async function removeField(field: BusinessModuleExtField) {
   ElMessage.success('字段已删除')
 }
 
+watch(moduleDialogVisible, (open) => {
+  if (open) void loadBarcodeOptions()
+})
+
 onMounted(async () => {
-  await Promise.all([loadSecurityLevels(), loadUserDisplays(), loadTree(), loadDocumentTypeOptions()])
+  await Promise.all([loadSecurityLevels(), loadUserDisplays(), loadTree(), loadDocumentTypeOptions(), loadBarcodeOptions()])
 })
 </script>
 
@@ -1026,13 +1264,18 @@ onMounted(async () => {
 .tree-node-side { display: flex; align-items: flex-start; align-self: stretch; padding-top: 2px; }
 .function-tag { margin-right: 6px; }
 .ext-attribute-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.ext-attribute-meta { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; color: #5f7384; font-size: 12px; }
+.ext-attribute-meta-text { white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+.field-semantic-hint { margin-top: 6px; color: #6e8394; font-size: 12px; line-height: 1.5; }
 .hidden-file-input { display: none; }
 .empty-actions { display: flex; justify-content: center; margin-top: 12px; }
 .tree-pagination { display: flex; justify-content: center; margin-top: 14px; }
 .field-pagination { display: flex; justify-content: flex-end; margin-top: 14px; }
 .field-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.field-query { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)) auto; gap: 12px; align-items: end; margin: 4px 0 16px; padding: 14px; border: 1px solid #e2edf3; border-radius: 16px; background: #f8fbfd; }
-.field-query-actions { display: flex; gap: 8px; align-items: center; padding-bottom: 18px; }
+.field-query { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; gap: 12px; align-items: end; margin: 4px 0 16px; padding: 14px; border: 1px solid #e2edf3; border-radius: 16px; background: #f8fbfd; }
+.field-query :deep(.el-form-item) { min-width: 0; margin-bottom: 0; }
+.field-query-actions { display: flex; flex-shrink: 0; gap: 8px; align-items: center; justify-content: flex-end; padding-bottom: 18px; }
 .level-hint { margin-top: 6px; color: #7a8b99; font-size: 12px; line-height: 1.5; }
+.leaf-barcode-hint { margin-left: 8px; color: #909399; font-size: 12px; }
 @media (max-width: 1000px) { .module-layout, .module-query, .field-query { grid-template-columns: 1fr; } .module-hero { align-items: flex-start; flex-direction: column; } .field-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } .query-actions, .field-query-actions { padding-bottom: 0; } }
 </style>

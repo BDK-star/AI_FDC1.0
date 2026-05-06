@@ -85,6 +85,8 @@ export interface BusinessModuleCommand {
   integrationType?: '全部集成' | '部分集成' | '不集成'
   description?: string
   remark?: string
+  /** 条码模块编码，不映射可省略 */
+  barcodeModuleCode?: string | null
 }
 
 export interface BusinessModuleUpdateCommand {
@@ -96,6 +98,10 @@ export interface BusinessModuleUpdateCommand {
   integrationType?: '全部集成' | '部分集成' | '不集成'
   description?: string
   remark?: string
+  /** true：按 barcodeModuleCode 更新（null 表示解除）；false：不改编码映射 */
+  patchBarcodeModuleCode?: boolean
+  /** 条码模块编码；配合 patchBarcodeModuleCode 使用 */
+  barcodeModuleCode?: string | null
 }
 
 export interface BusinessModuleExtFieldCommand {
@@ -131,25 +137,45 @@ export function createBusinessModule(data: BusinessModuleCommand) {
 }
 
 export function updateBusinessModule(moduleCode: string, data: BusinessModuleUpdateCommand) {
-  return apiRequest<BusinessModuleNode>(http.put(`/api/base-data/business-modules/${moduleCode}`, data))
+  const code = encodeURIComponent(moduleCode.trim())
+  return apiRequest<BusinessModuleNode>(http.put(`/api/base-data/business-modules/${code}`, data))
 }
 
 export function deleteBusinessModule(moduleCode: string) {
-  return apiRequest<void>(http.delete(`/api/base-data/business-modules/${moduleCode}`))
+  const code = encodeURIComponent(moduleCode.trim())
+  return apiRequest<void>(http.delete(`/api/base-data/business-modules/${code}`))
 }
 
 export function fetchBusinessModuleExtFields(moduleCode: string, fieldScope?: 'BASIC' | 'ATTACHMENT') {
-  return apiRequest<BusinessModuleExtField[]>(http.get(`/api/base-data/business-modules/${moduleCode}/ext-fields`, { params: { fieldScope } }))
+  const code = encodeURIComponent(moduleCode.trim())
+  return apiRequest<BusinessModuleExtField[]>(
+    http.get(`/api/base-data/business-modules/${code}/ext-fields`, { params: { fieldScope } })
+  )
+}
+
+/** 文档类型根及其子树：BASIC + 应归档数据 扩展字段并集（与批量导入模板后半段一致） */
+export function fetchPendingArchiveExtFieldsUnion(documentTypeRootCode: string) {
+  const code = encodeURIComponent(documentTypeRootCode.trim())
+  return apiRequest<BusinessModuleExtField[]>(
+    http.get(`/api/base-data/business-modules/${code}/pending-archive-ext-fields-union`)
+  )
 }
 
 export function createBusinessModuleExtField(moduleCode: string, data: BusinessModuleExtFieldCommand) {
-  return apiRequest<BusinessModuleExtField>(http.post(`/api/base-data/business-modules/${moduleCode}/ext-fields`, data))
+  const code = encodeURIComponent(moduleCode.trim())
+  return apiRequest<BusinessModuleExtField>(http.post(`/api/base-data/business-modules/${code}/ext-fields`, data))
 }
 
 export function updateBusinessModuleExtField(moduleCode: string, fieldCode: string, data: BusinessModuleExtFieldCommand) {
-  return apiRequest<BusinessModuleExtField>(http.put(`/api/base-data/business-modules/${moduleCode}/ext-fields/${fieldCode}`, data))
+  const code = encodeURIComponent(moduleCode.trim())
+  const fc = encodeURIComponent(fieldCode.trim())
+  return apiRequest<BusinessModuleExtField>(
+    http.put(`/api/base-data/business-modules/${code}/ext-fields/${fc}`, data)
+  )
 }
 
 export function deleteBusinessModuleExtField(moduleCode: string, fieldCode: string) {
-  return apiRequest<void>(http.delete(`/api/base-data/business-modules/${moduleCode}/ext-fields/${fieldCode}`))
+  const code = encodeURIComponent(moduleCode.trim())
+  const fc = encodeURIComponent(fieldCode.trim())
+  return apiRequest<void>(http.delete(`/api/base-data/business-modules/${code}/ext-fields/${fc}`))
 }

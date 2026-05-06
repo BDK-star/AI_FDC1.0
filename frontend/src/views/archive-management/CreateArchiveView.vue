@@ -147,7 +147,9 @@
               <el-input v-model="form.sourceSystem" placeholder="请输入系统来源" />
             </el-form-item>
             <el-form-item label="产生地">
-              <el-input v-model="form.originPlace" placeholder="请输入产生地" />
+              <el-select v-model="form.originPlace" filterable clearable placeholder="请选择国家">
+                <el-option v-for="item in options.geoCountries" :key="item.code" :label="item.name" :value="item.code" />
+              </el-select>
             </el-form-item>
           </div>
 
@@ -345,7 +347,11 @@ const options = reactive<ArchiveCreateOptions>({
   carrierTypes: [],
   attachmentTypes: [],
   archiveTypes: [],
-  aiModels: []
+  aiModels: [],
+  geoCountries: [],
+  geoRepOffices: [],
+  geoRegions: [],
+  custodyStatuses: []
 })
 
 const archiveSteps = [
@@ -495,6 +501,9 @@ const handleDefaultRefresh = async () => {
   form.documentOrganizationCode = defaults.documentOrganizationCode || form.documentOrganizationCode
   form.retentionPeriodYears = defaults.retentionPeriodYears ?? form.retentionPeriodYears
   form.countryCode = defaults.countryCode || form.countryCode
+  if (!form.originPlace && form.countryCode) {
+    form.originPlace = form.countryCode
+  }
 }
 
 const uploadFiles = async (role: 'ELECTRONIC' | 'PAPER_SCAN', file: File) => {

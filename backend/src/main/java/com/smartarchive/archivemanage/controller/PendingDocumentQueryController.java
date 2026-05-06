@@ -1,8 +1,10 @@
 package com.smartarchive.archivemanage.controller;
 
+import com.smartarchive.archivemanage.support.DocumentVisibilitySupport;
 import com.smartarchive.archivemanage.dto.PendingDocumentQueryCommand;
 import com.smartarchive.archivemanage.dto.PendingDocumentRowResponse;
 import com.smartarchive.archivemanage.service.PendingArchiveBatchImportService;
+import com.smartarchive.archivemanage.service.support.PendingBatchImportTemplateService;
 import com.smartarchive.archivemanage.service.support.MultiValueTextParse;
 import com.smartarchive.archivemanage.service.support.SecurityLevelResolver;
 import com.smartarchive.workspace.dto.WorkspaceIoJobCreateCommand;
@@ -31,10 +33,15 @@ import java.util.LinkedHashMap;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executor;
 import java.util.stream.Stream;
+import java.util.Locale;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.StringUtils;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -54,6 +61,7 @@ public class PendingDocumentQueryController {
     private final SecurityLevelResolver securityLevelResolver;
     private final ObjectMapper objectMapper;
     private final PendingArchiveBatchImportService pendingArchiveBatchImportService;
+    private final PendingBatchImportTemplateService pendingBatchImportTemplateService;
     private final WorkspaceIoJobService workspaceIoJobService;
     private final JdbcTemplate jdbcTemplate;
     @Qualifier("pendingArchiveBatchExecutor")
@@ -64,6 +72,7 @@ public class PendingDocumentQueryController {
                                           SecurityLevelResolver securityLevelResolver,
                                           ObjectMapper objectMapper,
                                           PendingArchiveBatchImportService pendingArchiveBatchImportService,
+                                          PendingBatchImportTemplateService pendingBatchImportTemplateService,
                                           WorkspaceIoJobService workspaceIoJobService,
                                           JdbcTemplate jdbcTemplate,
                                           @Qualifier("pendingArchiveBatchExecutor") Executor taskExecutor) {
@@ -72,9 +81,32 @@ public class PendingDocumentQueryController {
         this.securityLevelResolver = securityLevelResolver;
         this.objectMapper = objectMapper;
         this.pendingArchiveBatchImportService = pendingArchiveBatchImportService;
+        this.pendingBatchImportTemplateService = pendingBatchImportTemplateService;
         this.workspaceIoJobService = workspaceIoJobService;
         this.jdbcTemplate = jdbcTemplate;
         this.taskExecutor = taskExecutor;
+    }
+
+    /**
+     * 应归档批量导入 CSV 模板（服务端生成，与前端列规则一致）。
+     */
+    @GetMapping(value = "/batch-import-template", produces = "text/csv;charset=UTF-8")
+    public ResponseEntity<String> getBatchImportTemplate(
+        @RequestParam String documentTypeCode,
+        @RequestParam(required = false) String companyProjectCode,
+        @RequestParam(required = false) String archiveTypeCode,
+        @RequestParam(required = false) String documentTypeName
+    ) {
+        String body = pendingBatchImportTemplateService.buildTemplateCsv(
+            documentTypeCode,
+            companyProjectCode,
+            archiveTypeCode,
+            documentTypeName != null ? documentTypeName : ""
+        );
+        return ResponseEntity.ok()
+            .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"pending-batch-import-template.csv\"")
+            .body(body);
     }
 
     /**
@@ -158,7 +190,7 @@ public class PendingDocumentQueryController {
                    fdc_document_t.doc_id, doc_biz_no, company_name, biz_module_code, start_period, end_period,
                    arch_place_alpha2_code, origin_place_alpha2_code, doc_organization_code, lifecycle_status,
                    doc_name, doc_gen_date, doc_resp_person_id, doc_resp_dept_id, carrier_type,
-                   attr1,
+                   visible_flag,
                    source_system, security_level, description, fdc_document_t.creation_date as creation_date,
                    fdc_document_t.created_by as created_by, fdc_document_t.last_updated_by as last_updated_by, fdc_document_t.last_update_date as last_update_date,
                    cp.country_code, geo.rep_office_name, geo.region_name,
@@ -191,11 +223,10 @@ public class PendingDocumentQueryController {
             where coalesce(fdc_document_t.delete_flag, 0) = 0
         """);
         MapSqlParameterSource params = new MapSqlParameterSource();
+        sql.append(" and lower(trim(coalesce(fdc_document_t.lifecycle_status, ''))) = 'unarchived'");
         if (hasText(command.getCustodyStatus())) {
-            sql.append(" and lower(trim(coalesce(fdc_document_t.lifecycle_status, ''))) = lower(trim(:lifecycleFilter))");
-            params.addValue("lifecycleFilter", command.getCustodyStatus().trim());
-        } else {
-            sql.append(" and lower(trim(coalesce(fdc_document_t.lifecycle_status, ''))) = 'unarchived'");
+            sql.append(" and lower(trim(coalesce(fdc_document_t.custody_status, ''))) = lower(trim(:custodyStatus))");
+            params.addValue("custodyStatus", command.getCustodyStatus().trim());
         }
 
         if (hasText(command.getDocumentTypeCode())) {
@@ -218,13 +249,20 @@ public class PendingDocumentQueryController {
             sql.append(" and company_code = :companyCode");
             params.addValue("companyCode", command.getCompanyCode().trim());
         }
-        if (hasText(command.getArchiveTypeCode())) {
-            sql.append(" and biz_module_code = :archiveTypeCode");
-            params.addValue("archiveTypeCode", command.getArchiveTypeCode().trim());
+        List<String> archiveTypeCodes = resolveArchiveTypeCodes(command);
+        if (!archiveTypeCodes.isEmpty()) {
+            sql.append(" and biz_module_code in (:archiveTypeCodes)");
+            params.addValue("archiveTypeCodes", archiveTypeCodes);
         }
-        if (hasText(command.getCarrierType())) {
-            sql.append(" and carrier_type = :carrierType");
-            params.addValue("carrierType", command.getCarrierType().trim());
+        List<String> carrierTypeCodes = resolveCarrierTypeCodes(command);
+        if (!carrierTypeCodes.isEmpty()) {
+            sql.append(" and carrier_type in (:carrierTypeCodes)");
+            params.addValue("carrierTypeCodes", carrierTypeCodes);
+        }
+        List<String> documentArchiveTypeCodes = resolveDocumentArchiveTypeCodes(command);
+        if (!documentArchiveTypeCodes.isEmpty()) {
+            sql.append(" and arch_type_code in (:documentArchiveTypeCodes)");
+            params.addValue("documentArchiveTypeCodes", documentArchiveTypeCodes);
         }
         List<String> bizTokens = resolveBusinessCodeTokens(command);
         if (bizTokens.size() == 1) {
@@ -303,6 +341,14 @@ public class PendingDocumentQueryController {
             sql.append(" and geo.region_name = :region");
             params.addValue("region", command.getRegion().trim());
         }
+        if (hasText(command.getArchiveDestination())) {
+            sql.append(" and arch_place_alpha2_code = :archiveDestination");
+            params.addValue("archiveDestination", command.getArchiveDestination().trim());
+        }
+        if (hasText(command.getOriginPlace())) {
+            sql.append(" and origin_place_alpha2_code = :originPlace");
+            params.addValue("originPlace", command.getOriginPlace().trim());
+        }
         if (hasText(command.getDutyPerson())) {
             sql.append("""
                 and (
@@ -313,6 +359,20 @@ public class PendingDocumentQueryController {
                 )
                 """);
             params.addValue("dutyPerson", "%" + command.getDutyPerson().trim() + "%");
+        }
+        if (command.getBarcodeModuleCodes() != null && !command.getBarcodeModuleCodes().isEmpty()) {
+            sql.append("""
+                 and exists (
+                   select 1 from fdc_business_module_t bm_bar
+                    where bm_bar.module_code = fdc_document_t.biz_module_code
+                      and coalesce(bm_bar.delete_flag, 'N') = 'N'
+                      and bm_bar.barcode_module_code in (:barcodeModuleCodes)
+                 )
+                """);
+            params.addValue("barcodeModuleCodes", command.getBarcodeModuleCodes().stream()
+                .filter(StringUtils::hasText)
+                .map(s -> s.trim().toUpperCase(Locale.ROOT))
+                .toList());
         }
         sql.append(" order by fdc_document_t.doc_id desc");
 
@@ -343,7 +403,7 @@ public class PendingDocumentQueryController {
                 .owner(rs.getString("owner_name"))
                 .responsibleDept(String.valueOf(rs.getObject("doc_resp_dept_id")))
                 .carrierType(carrierTypeNameMap.getOrDefault(rs.getString("carrier_type"), rs.getString("carrier_type")))
-                .visibility(hasText(rs.getString("attr1")) ? rs.getString("attr1").trim() : "是")
+                .visibility(DocumentVisibilitySupport.toDisplayYesNo(rs.getString("visible_flag")))
                 .sourceSystem(rs.getString("source_system"))
                 .securityLevelCode(secLv.canonicalCode())
                 .securityLevelName(secLv.displayName())
@@ -365,12 +425,62 @@ public class PendingDocumentQueryController {
         return ApiResponse.success(rows == null ? new ArrayList<>() : rows);
     }
 
+    private List<String> resolveArchiveTypeCodes(PendingDocumentQueryCommand command) {
+        List<String> out = new ArrayList<>();
+        if (command.getArchiveTypeCodes() != null) {
+            command.getArchiveTypeCodes().stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .forEach(out::add);
+        }
+        if (out.isEmpty() && hasText(command.getArchiveTypeCode())) {
+            out.add(command.getArchiveTypeCode().trim());
+        }
+        return out;
+    }
+
+    private List<String> resolveCarrierTypeCodes(PendingDocumentQueryCommand command) {
+        List<String> out = new ArrayList<>();
+        if (command.getCarrierTypes() != null) {
+            command.getCarrierTypes().stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .forEach(out::add);
+        }
+        if (out.isEmpty() && hasText(command.getCarrierType())) {
+            out.add(command.getCarrierType().trim());
+        }
+        return out;
+    }
+
+    private List<String> resolveDocumentArchiveTypeCodes(PendingDocumentQueryCommand command) {
+        if (command.getDocumentArchiveTypeCodes() == null) {
+            return List.of();
+        }
+        return command.getDocumentArchiveTypeCodes().stream()
+            .filter(StringUtils::hasText)
+            .map(String::trim)
+            .distinct()
+            .toList();
+    }
+
     private void validateDocumentTypeArchiveTypeConsistency(PendingDocumentQueryCommand command) {
         String docType = trimToNull(command.getDocumentTypeCode());
-        String archiveType = trimToNull(command.getArchiveTypeCode());
-        if (!StringUtils.hasText(docType) || !StringUtils.hasText(archiveType)) {
+        if (!StringUtils.hasText(docType)) {
             return;
         }
+        List<String> codes = resolveArchiveTypeCodes(command);
+        if (codes.isEmpty()) {
+            return;
+        }
+        for (String archiveType : codes) {
+            validateSingleArchiveUnderDocumentType(docType, archiveType);
+        }
+    }
+
+    private void validateSingleArchiveUnderDocumentType(String docType, String archiveType) {
         BusinessModule module = businessModuleMapper.selectOne(new LambdaQueryWrapper<BusinessModule>()
             .eq(BusinessModule::getModuleCode, archiveType)
             .eq(BusinessModule::getDeleteFlag, "N")
@@ -473,17 +583,24 @@ public class PendingDocumentQueryController {
             sql.append(" and (d.payload_json->>'companyProjectCode') = :companyCode");
             params.addValue("companyCode", command.getCompanyCode().trim());
         }
-        if (hasText(command.getArchiveTypeCode())) {
-            sql.append(" and (d.payload_json->>'archiveTypeCode') = :archiveTypeCode");
-            params.addValue("archiveTypeCode", command.getArchiveTypeCode().trim());
+        List<String> draftArchiveCodes = resolveArchiveTypeCodes(command);
+        if (!draftArchiveCodes.isEmpty()) {
+            sql.append(" and (d.payload_json->>'archiveTypeCode') in (:draftArchiveTypeCodes)");
+            params.addValue("draftArchiveTypeCodes", draftArchiveCodes);
         }
         if (hasText(command.getDocumentTypeCode())) {
             sql.append(" and (d.payload_json->>'documentTypeCode') = :documentTypeCode");
             params.addValue("documentTypeCode", command.getDocumentTypeCode().trim());
         }
-        if (hasText(command.getCarrierType())) {
-            sql.append(" and (d.payload_json->>'carrierTypeCode') = :carrierType");
-            params.addValue("carrierType", command.getCarrierType().trim());
+        List<String> draftCarriers = resolveCarrierTypeCodes(command);
+        if (!draftCarriers.isEmpty()) {
+            sql.append(" and (d.payload_json->>'carrierTypeCode') in (:draftCarrierTypeCodes)");
+            params.addValue("draftCarrierTypeCodes", draftCarriers);
+        }
+        List<String> draftDocArchiveTypes = resolveDocumentArchiveTypeCodes(command);
+        if (!draftDocArchiveTypes.isEmpty()) {
+            sql.append(" and coalesce(d.payload_json->'extValues'->>'archiveType','') in (:draftDocumentArchiveTypeCodes)");
+            params.addValue("draftDocumentArchiveTypeCodes", draftDocArchiveTypes);
         }
         if (hasText(command.getDocOrganization())) {
             sql.append(" and (d.payload_json->>'documentOrganizationCode') = :docOrganization");
@@ -508,6 +625,14 @@ public class PendingDocumentQueryController {
         if (hasText(command.getRegion())) {
             sql.append(" and geo.region_name = :region");
             params.addValue("region", command.getRegion().trim());
+        }
+        if (hasText(command.getArchiveDestination())) {
+            sql.append(" and coalesce(d.payload_json->>'archiveDestination','') = :draftArchiveDestination");
+            params.addValue("draftArchiveDestination", command.getArchiveDestination().trim());
+        }
+        if (hasText(command.getOriginPlace())) {
+            sql.append(" and coalesce(d.payload_json->>'originPlace','') = :draftOriginPlace");
+            params.addValue("draftOriginPlace", command.getOriginPlace().trim());
         }
         sql.append(" order by d.draft_id desc");
 
@@ -836,8 +961,13 @@ public class PendingDocumentQueryController {
     }
 
     private static void requireImportQueryHeaders(Map<String, Integer> idx) {
-        for (String k : List.of("businessCode", "invoiceNo", "refNo", "companyCode", "archiveTypeCode", "beginPeriod")) {
-            if (!idx.containsKey(k)) throw new BusinessException("模板字段不正确，请下载最新模板后重试");
+        for (String k : List.of("companyCode", "archiveTypeCode", "beginPeriod")) {
+            if (!idx.containsKey(k)) {
+                throw new BusinessException("模板缺少必填列：公司、业务模块、开始档期");
+            }
+        }
+        if (!idx.containsKey("businessCode") && !idx.containsKey("invoiceNo") && !idx.containsKey("refNo")) {
+            throw new BusinessException("模板须至少包含以下之一：文档业务编码、发票号、其他相关编号");
         }
     }
 

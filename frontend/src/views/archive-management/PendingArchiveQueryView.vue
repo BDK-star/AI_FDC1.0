@@ -23,14 +23,17 @@
           <div class="f02-field">
             <label>业务模块</label>
             <el-tree-select
-              v-model="filters.archiveTypeCode"
+              v-model="filters.archiveTypeCodes"
               :data="businessModuleTreeOptions"
+              multiple
               filterable
               clearable
+              collapse-tags
+              collapse-tags-tooltip
               check-strictly
               default-expand-all
               :render-after-expand="false"
-              placeholder="请选择业务模块"
+              placeholder="可多选"
               class="f02-control"
               node-key="moduleCode"
               :props="{ value: 'moduleCode', label: 'queryLabel', children: 'children' }"
@@ -51,8 +54,31 @@
           </div>
           <div class="f02-field">
             <label>载体类型</label>
-            <el-select v-model="filters.carrierType" clearable placeholder="请选择" class="f02-control">
+            <el-select
+              v-model="filters.carrierTypes"
+              multiple
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="可多选"
+              class="f02-control"
+            >
               <el-option v-for="item in options.carrierTypes" :key="item.code" :label="item.name" :value="item.code" />
+            </el-select>
+          </div>
+          <div class="f02-field">
+            <label>档案类型</label>
+            <el-select
+              v-model="filters.documentArchiveTypeCodes"
+              multiple
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              placeholder="可多选"
+              class="f02-control"
+            >
+              <el-option v-for="item in options.archiveTypes" :key="item.code" :label="item.name" :value="item.code" />
             </el-select>
           </div>
           <div class="f02-field">
@@ -88,11 +114,51 @@
         <div v-show="moreFilters" class="f02-filter-grid f02-filter-grid--more">
           <div v-for="field in visibleMoreFilterFields" :key="field.key" class="f02-field">
             <label>{{ field.label }}</label>
+            <el-cascader
+              v-if="field.type === 'cascader' && field.optionSource === 'archiveDestinationCascader'"
+              v-model="archiveDestinationMorePath"
+              :options="archiveDestinationCascaderOptions"
+              :props="{ value: 'value', label: 'label', children: 'children', emitPath: true, checkStrictly: true }"
+              clearable
+              filterable
+              :placeholder="field.placeholder || '请选择国家/省份/城市'"
+              class="f02-control"
+              style="width: 100%"
+            />
             <el-select
-              v-if="field.type === 'select'"
+              v-else-if="field.optionSource === 'geoCountries'"
               v-model="(filters as any)[field.key]"
               clearable
-              placeholder="请选择"
+              filterable
+              :placeholder="field.placeholder || '请选择国家'"
+              class="f02-control"
+            >
+              <el-option v-for="item in options.geoCountries" :key="item.code" :label="item.name" :value="item.code" />
+            </el-select>
+            <el-select
+              v-else-if="field.optionSource === 'barcodeModules'"
+              v-model="(filters as any).barcodeModuleCodes"
+              multiple
+              clearable
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              :placeholder="field.placeholder || '请选择'"
+              class="f02-control"
+            >
+              <el-option
+                v-for="b in barcodeModuleOptions"
+                :key="b.barcodeCode"
+                :label="`${b.barcodeCode} ｜ ${b.barcodeName}`"
+                :value="b.barcodeCode"
+              />
+            </el-select>
+            <el-select
+              v-else-if="field.type === 'select'"
+              v-model="(filters as any)[field.key]"
+              clearable
+              filterable
+              :placeholder="field.placeholder || '请选择'"
               class="f02-control"
               :multiple="field.multiple ?? false"
             >
@@ -125,7 +191,10 @@
             />
           </div>
           <div v-for="field in moduleExtFilterFields" :key="`ext-${field.fieldCode}`" class="f02-field">
-            <label>{{ field.fieldName }}</label>
+            <label class="module-ext-filter-label">
+              <span>{{ field.fieldName }}</span>
+              <el-tag v-if="field.fieldScope === 'ATTACHMENT'" size="small" effect="light" type="primary" class="module-ext-scope-tag">附件</el-tag>
+            </label>
             <el-input
               v-model="extFilterValues[field.fieldCode]"
               clearable
@@ -153,7 +222,7 @@
             <el-icon class="el-icon--left"><Plus /></el-icon>
             应归档数据创建
           </el-button>
-          <el-button @click="openBatchDialog('CREATE')" :disabled="!docTypeReady">
+          <el-button @click="openBatchDialog('CREATE')" :disabled="!docTypeReady" :loading="batchTemplatePreparing">
             <el-icon class="el-icon--left"><Upload /></el-icon>
             批量创建
           </el-button>
@@ -161,7 +230,7 @@
             <el-icon class="el-icon--left"><RefreshRight /></el-icon>
             批量更新
           </el-button>
-          <el-button @click="exportCsv" :disabled="!docTypeReady">批量导出</el-button>
+          <el-button @click="exportCsv" :disabled="!docTypeReady" :loading="exporting">批量导出</el-button>
           <el-button type="primary" @click="openBatchDialog('IMPORT_QUERY')" :disabled="!docTypeReady">
             <el-icon class="el-icon--left"><Search /></el-icon>
             批量导入查询
@@ -275,17 +344,14 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="exportSuccessVisible" title="提示" width="460px">
-      <div class="export-success-tip">
-        导出提交成功，系统正在处理，稍后请到
-        <el-link type="primary" @click="goMyExports">我的导出</el-link>
-        中查看导出结果。
-      </div>
+    <el-dialog v-model="exportSuccessVisible" title="导出成功" width="440px" destroy-on-close>
+      <p class="export-success-tip">导出成功，请到我的导出查看并下载 CSV 文件。</p>
       <template #footer>
         <el-button @click="exportSuccessVisible = false">关闭</el-button>
         <el-button type="primary" @click="goMyExports">前往我的导出</el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>
 
@@ -297,11 +363,11 @@ import { useRouter } from 'vue-router'
 import {
   createPendingDocumentsExportJob,
   fetchArchiveCreateOptions,
-  getArchiveDetail,
+  fetchPendingBatchImportTemplateCsv,
   queryPendingDocuments,
+  submitPendingArchiveBatchAdjust,
   submitPendingArchiveBatchImport,
   submitPendingImportQueryJob,
-  updatePendingDocument,
   uploadPendingAuditAttachment,
   type PendingAuditAttachmentRef,
   type PendingDocumentQueryCommand,
@@ -316,10 +382,20 @@ import {
   resolveRootDocumentTypeCodeByModule,
   type ModuleQueryTreeNode
 } from '../../api/modules/businessModule'
+import { resolveCustodyStatusLabelOptions } from './archiveCustodyStatusOptions'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
 import { fetchUsers } from '../../api/modules/security'
 import { parseMultiValueLines, validateMultiValueInput } from '../../utils/multiValueQuery'
-import type { ArchiveCreateOptions, ArchiveRecordSummary, BusinessModuleExtField, BusinessModuleNode } from '../../types'
+import { fetchBarcodeModules } from '../../api/modules/barcodeModule'
+import { fetchCountryRegions } from '../../api/modules/countryRegion'
+import type {
+  ArchiveCreateOptions,
+  ArchiveRecordSummary,
+  BarcodeModule,
+  BusinessModuleExtField,
+  BusinessModuleNode,
+  CountryRegionItem
+} from '../../types'
 import type { User } from '../../api/modules/security'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import F03BatchImportModal from '../../components/f03/F03BatchImportModal.vue'
@@ -330,6 +406,10 @@ import {
   buildCoreOnlyPendingBatchTemplateCsv,
   buildPendingArchiveBatchImportTemplateCsv
 } from './pendingArchiveBatchImportTemplate'
+import {
+  buildArchiveDestinationCascaderOptions,
+  buildArchiveDestinationPath
+} from '../../utils/archiveFlowAlignedFieldUtils'
 
 type DemoRow = PendingDocumentRowResponse
 
@@ -392,17 +472,6 @@ const options = reactive<ArchiveCreateOptions>({
   custodyStatuses: []
 })
 
-const resolvePendingSecurityFields = (raw: string) => {
-  const t = String(raw ?? '').trim()
-  if (!t) return { securityLevelCode: '', securityLevelName: '', securityLevel: '' }
-  const o = options.securityLevels.find((x) => x.code === t || x.name === t)
-  if (o) return { securityLevelCode: o.code, securityLevelName: o.name, securityLevel: o.name }
-  const upper = t.toUpperCase()
-  const byCode = options.securityLevels.find((x) => x.code === upper)
-  if (byCode) return { securityLevelCode: byCode.code, securityLevelName: byCode.name, securityLevel: byCode.name }
-  return { securityLevelCode: t, securityLevelName: t, securityLevel: t }
-}
-
 const companySelectOptions = ref<Array<{ code: string; name: string }>>([])
 const userSelectOptions = ref<Array<{ label: string; value: string }>>([])
 const userDisplayById = computed<Record<string, string>>(() =>
@@ -410,6 +479,7 @@ const userDisplayById = computed<Record<string, string>>(() =>
 )
 const businessModuleSourceTree = ref<BusinessModuleNode[]>([])
 const businessModuleTreeOptions = ref<ModuleQueryTreeNode[]>([])
+const barcodeModuleOptions = ref<BarcodeModule[]>([])
 const moduleExtFilterFields = ref<BusinessModuleExtField[]>([])
 const extFilterValues = reactive<Record<string, string>>({})
 
@@ -417,8 +487,9 @@ const filters = reactive({
   documentTypeCode: '',
   /** 对应数据模型公司编码（API 字段仍为 companyProjectCode） */
   companyCode: '',
-  archiveTypeCode: '',
-  carrierType: '',
+  archiveTypeCodes: [] as string[],
+  carrierTypes: [] as string[],
+  documentArchiveTypeCodes: [] as string[],
   docGenerationRange: null as [string, string] | null,
   businessCode: '',
   docOrganization: '',
@@ -430,15 +501,16 @@ const filters = reactive({
   custodyStatus: '',
   securityLevel: '',
   description: '',
-  archPlace: '',
-  originatingPlace: '',
+  archiveDestination: '',
+  originPlace: '',
   dutyPerson: '',
   respArchDept: '',
   createdBy: '',
   creationDateRange: null as [string, string] | null,
   sourceSystemFilter: [] as string[],
   archivedEntityName: '',
-  barcodeModule: '',
+  /** 条码模块主键，与配置中心「条码模块」启用项一致 */
+  barcodeModuleCodes: [] as string[],
   archiveBarcodeRange: '',
   verificationDateRange: null as [string, string] | null,
   verifiedBy: [] as string[],
@@ -472,6 +544,59 @@ const filters = reactive({
   lgWorkflowNo: '',
   lgNo: ''
 })
+
+const archiveDestinationMorePath = ref<string[]>([])
+const regionCountryOptions = ref<CountryRegionItem[]>([])
+const regionProvinceOptions = ref<CountryRegionItem[]>([])
+const regionCityOptions = ref<CountryRegionItem[]>([])
+const archiveDestinationCascaderOptions = computed(() =>
+  buildArchiveDestinationCascaderOptions(
+    regionCountryOptions.value,
+    regionProvinceOptions.value,
+    regionCityOptions.value
+  )
+)
+
+const syncArchiveDestinationPathFromPendingFilter = () => {
+  const code = String(filters.archiveDestination || '').trim()
+  archiveDestinationMorePath.value = code
+    ? buildArchiveDestinationPath(code, regionCountryOptions.value, regionProvinceOptions.value, regionCityOptions.value)
+    : []
+}
+
+watch(archiveDestinationMorePath, (path) => {
+  if (!path?.length) {
+    filters.archiveDestination = ''
+    return
+  }
+  filters.archiveDestination = path[path.length - 1] || ''
+})
+
+async function loadArchiveDestinationRegionTree() {
+  try {
+    const countries = await fetchCountryRegions({ regionLevel: 'COUNTRY' })
+    const countryCodes = countries.map((c) => c.regionCode).filter(Boolean)
+    const provincesNested = await Promise.all(
+      countryCodes.map((cc) => fetchCountryRegions({ regionLevel: 'PROVINCE', parentRegionCode: cc }))
+    )
+    const provinces = provincesNested.flat()
+    const provinceCodes = provinces.map((p) => p.regionCode).filter(Boolean)
+    const citiesNested = await Promise.all(
+      provinceCodes.map((pc) => fetchCountryRegions({ regionLevel: 'CITY', parentRegionCode: pc }))
+    )
+    const cities = citiesNested.flat()
+    regionCountryOptions.value = countries
+    regionProvinceOptions.value = provinces
+    regionCityOptions.value = cities
+    syncArchiveDestinationPathFromPendingFilter()
+  } catch {
+    regionCountryOptions.value = []
+    regionProvinceOptions.value = []
+    regionCityOptions.value = []
+    archiveDestinationMorePath.value = []
+  }
+}
+
 const periodRange = ref<[string, string] | null>(null)
 const moreFilters = ref(false)
 const docTypeReady = computed(() => Boolean(filters.documentTypeCode && filters.documentTypeCode.trim()))
@@ -500,19 +625,48 @@ const visibleMoreFilterFields = computed(() =>
   getVisibleMoreFilterFields(pendingArchiveQueryPageConfig.moreFilterFields, selectedDocTypeName.value)
     .filter((field) => !LEGACY_FIXED_EXT_FILTER_KEYS.has(field.key))
 )
-const moreFieldOptionsMap = computed<Record<string, Array<{ label: string; value: string }>>>(() => ({
+const moreFieldOptionsMap = computed<Record<string, Array<{ label: string; value: string }>>>(() => {
+  const cc = String(filters.country || '').trim()
+  const repSrc = cc
+    ? options.geoRepOffices.filter((item) => String(item.code || '') === cc)
+    : options.geoRepOffices
+  const regSrc = cc
+    ? options.geoRegions.filter((item) => String(item.code || '') === cc)
+    : options.geoRegions
+  return {
   country: options.geoCountries.map((item) => ({ label: item.name, value: item.code })),
-  repOffice: options.geoRepOffices.map((item) => ({ label: item.name, value: item.name })),
-  region: options.geoRegions.map((item) => ({ label: item.name, value: item.name })),
-  custodyStatus: options.custodyStatuses
-    .filter((item) => item.code === 'UNARCHIVED')
-    .map((item) => ({ label: item.name, value: item.code })),
+  repOffice: repSrc.map((item) => ({ label: item.name, value: item.name })),
+  region: regSrc.map((item) => ({ label: item.name, value: item.name })),
+  custodyStatus: options.custodyStatuses.map((item) => ({ label: item.name, value: item.code })),
   verifiedBy: userSelectOptions.value,
   assembledBy: userSelectOptions.value,
   storedBy: userSelectOptions.value,
   accountant: userSelectOptions.value,
   scannedBy: userSelectOptions.value
-}))
+  }
+})
+
+watch(
+  () => filters.country,
+  (next) => {
+    const ccode = String(next || '').trim()
+    if (!ccode) {
+      filters.repOffice = ''
+      filters.region = ''
+      return
+    }
+    const repNames = new Set(
+      options.geoRepOffices.filter((o) => String(o.code || '') === ccode).map((o) => o.name)
+    )
+    const regNames = new Set(
+      options.geoRegions.filter((o) => String(o.code || '') === ccode).map((o) => o.name)
+    )
+    const ro = String(filters.repOffice || '').trim()
+    const rg = String(filters.region || '').trim()
+    if (ro && !repNames.has(ro)) filters.repOffice = ''
+    if (rg && !regNames.has(rg)) filters.region = ''
+  }
+)
 
 watch(
   () => filters.documentTypeCode,
@@ -528,15 +682,11 @@ const syncBusinessModuleOptionsByDocumentType = (documentTypeCode?: string) => {
     documentTypeCode || ''
   )
   businessModuleTreeOptions.value = buildModuleQueryTree(filtered)
-  if (
-    filters.archiveTypeCode &&
-    !isModuleCodeWithinDocumentType(
-      businessModuleSourceTree.value,
-      documentTypeCode || '',
-      filters.archiveTypeCode
+  const dt = documentTypeCode || ''
+  if (filters.archiveTypeCodes?.length) {
+    filters.archiveTypeCodes = filters.archiveTypeCodes.filter((c) =>
+      isModuleCodeWithinDocumentType(businessModuleSourceTree.value, dt, c)
     )
-  ) {
-    filters.archiveTypeCode = ''
   }
 }
 
@@ -546,37 +696,56 @@ const handleDocumentTypeChange = (next?: string) => {
   Object.keys(extFilterValues).forEach((key) => delete extFilterValues[key])
 }
 
-const handleArchiveTypeChange = (next?: string) => {
-  const moduleCode = String(next || '').trim()
-  if (!moduleCode) {
+const handleArchiveTypeChange = async (next?: string | string[]) => {
+  const codes = (Array.isArray(next) ? next : next ? [next] : [])
+    .map((c) => String(c).trim())
+    .filter(Boolean)
+  if (!codes.length) {
     moduleExtFilterFields.value = []
     Object.keys(extFilterValues).forEach((key) => delete extFilterValues[key])
     return
   }
+  let primary = codes[0]
   if (filters.documentTypeCode?.trim()) {
     if (
       !isModuleCodeWithinDocumentType(
         businessModuleSourceTree.value,
         filters.documentTypeCode,
-        moduleCode
+        primary
       )
     ) {
-      const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+      const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, primary)
       if (rootDocType) {
         filters.documentTypeCode = rootDocType
-        syncBusinessModuleOptionsByDocumentType(rootDocType)
+        handleDocumentTypeChange(rootDocType)
       } else {
-        filters.archiveTypeCode = ''
+        filters.archiveTypeCodes = []
+        moduleExtFilterFields.value = []
+        Object.keys(extFilterValues).forEach((key) => delete extFilterValues[key])
+        return
       }
     }
-    loadModuleExtFilterFields(moduleCode)
+    const dt = filters.documentTypeCode || ''
+    filters.archiveTypeCodes = codes.filter((c) =>
+      isModuleCodeWithinDocumentType(businessModuleSourceTree.value, dt, c)
+    )
+    if (!filters.archiveTypeCodes.length) {
+      moduleExtFilterFields.value = []
+      Object.keys(extFilterValues).forEach((key) => delete extFilterValues[key])
+      return
+    }
+    primary = filters.archiveTypeCodes[0]
+    await loadModuleExtFilterFields(primary)
     return
   }
-  const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+  const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, primary)
   if (!rootDocType) return
   filters.documentTypeCode = rootDocType
-  syncBusinessModuleOptionsByDocumentType(rootDocType)
-  loadModuleExtFilterFields(moduleCode)
+  handleDocumentTypeChange(rootDocType)
+  filters.archiveTypeCodes = codes.filter((c) =>
+    isModuleCodeWithinDocumentType(businessModuleSourceTree.value, rootDocType, c)
+  )
+  await loadModuleExtFilterFields(filters.archiveTypeCodes[0] || primary)
 }
 
 const loadModuleExtFilterFields = async (moduleCode: string) => {
@@ -604,16 +773,41 @@ const loadModuleExtFilterFields = async (moduleCode: string) => {
 
 const rows = ref<DemoRow[]>([])
 const selectedRows = ref<DemoRow[]>([])
+const exporting = ref(false)
 const exportSuccessVisible = ref(false)
 
+function collectExportDocIdStrings(rows: Iterable<{ docId?: unknown; archiveId?: unknown; id?: unknown }>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const r of rows) {
+    const raw = r.docId ?? r.archiveId ?? r.id
+    if (raw == null) continue
+    const s = String(raw).trim()
+    if (!/^\d+$/.test(s)) continue
+    if (seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+  }
+  return out
+}
+
+const goMyExports = () => {
+  exportSuccessVisible.value = false
+  router.push('/workspace/export-query')
+}
+
 const loadOptions = async () => {
-  const [data, companies, moduleTree, users] = await Promise.all([
+  const [data, companies, moduleTree, users, barcodeMods] = await Promise.all([
     fetchArchiveCreateOptions(),
     fetchCompanyInfos({ enabledFlag: 'Y' }),
     fetchBusinessModuleTree().catch((): BusinessModuleNode[] => []),
-    fetchUsers().catch((): User[] => [])
+    fetchUsers().catch((): User[] => []),
+    fetchBarcodeModules({ enabledOnly: true }).catch((): BarcodeModule[] => [])
   ])
+  barcodeModuleOptions.value = barcodeMods
   Object.assign(options, data)
+  options.custodyStatuses = await resolveCustodyStatusLabelOptions(options.custodyStatuses ?? [])
+  await loadArchiveDestinationRegionTree()
   companySelectOptions.value = companies.map((c) => ({ code: c.companyCode, name: c.companyName }))
   userSelectOptions.value = users
     .map((u) => {
@@ -664,8 +858,11 @@ const runQuery = async () => {
     const command: PendingDocumentQueryCommand = {
       documentTypeCode: filters.documentTypeCode || undefined,
       companyCode: filters.companyCode || undefined,
-      archiveTypeCode: filters.archiveTypeCode || undefined,
-      carrierType: filters.carrierType || undefined,
+      archiveTypeCodes: filters.archiveTypeCodes?.length ? [...filters.archiveTypeCodes] : undefined,
+      carrierTypes: filters.carrierTypes?.length ? [...filters.carrierTypes] : undefined,
+      documentArchiveTypeCodes: filters.documentArchiveTypeCodes?.length
+        ? [...filters.documentArchiveTypeCodes]
+        : undefined,
       businessCode: bizParsed.length === 1 ? bizParsed[0] : undefined,
       businessCodes: bizParsed.length > 1 ? bizParsed : undefined,
       invoiceNo: filters.invoiceNo || undefined,
@@ -680,7 +877,10 @@ const runQuery = async () => {
       country: filters.country || undefined,
       repOffice: filters.repOffice || undefined,
       region: filters.region || undefined,
-      dutyPerson: filters.dutyPerson || undefined
+      dutyPerson: filters.dutyPerson || undefined,
+      barcodeModuleCodes: filters.barcodeModuleCodes?.length ? [...filters.barcodeModuleCodes] : undefined,
+      archiveDestination: filters.archiveDestination?.trim() || undefined,
+      originPlace: filters.originPlace?.trim() || undefined
     }
     rows.value = applyLocalExtFilters(await queryPendingDocuments(command))
     console.log('[PendingArchiveQuery] query command:', command, 'rows:', rows.value.length)
@@ -696,8 +896,9 @@ const runQuery = async () => {
 const resetFilters = () => {
   filters.documentTypeCode = ''
   filters.companyCode = ''
-  filters.archiveTypeCode = ''
-  filters.carrierType = ''
+  filters.archiveTypeCodes = []
+  filters.carrierTypes = []
+  filters.documentArchiveTypeCodes = []
   filters.docGenerationRange = null
   filters.businessCode = ''
   filters.docOrganization = ''
@@ -709,15 +910,16 @@ const resetFilters = () => {
   filters.custodyStatus = ''
   filters.securityLevel = ''
   filters.description = ''
-  filters.archPlace = ''
-  filters.originatingPlace = ''
+  filters.archiveDestination = ''
+  filters.originPlace = ''
+  archiveDestinationMorePath.value = []
   filters.dutyPerson = ''
   filters.respArchDept = ''
   filters.createdBy = ''
   filters.creationDateRange = null
   filters.sourceSystemFilter = []
   filters.archivedEntityName = ''
-  filters.barcodeModule = ''
+  filters.barcodeModuleCodes = []
   filters.archiveBarcodeRange = ''
   filters.verificationDateRange = null
   filters.verifiedBy = []
@@ -820,12 +1022,24 @@ const batchDialogTitle = computed(() => {
 
 const batchDialogHint = computed(() => {
   if (batchDialog.mode === 'CREATE') {
-    return '请下载模板文件，按列填写后上传 CSV。提交后系统异步导入，请在「我的工作空间 → 我的导入」查看进度并下载结果 Excel。'
+    return (
+      '模板首行为表头：前半部分为固定核心列（文档业务编码、公司、业务模块、档期、归档地、产生地、文档名称与生成日期、归档责任人及载体/系统来源/密级/描述/保管状态等）；' +
+      '后半部分为当前文档类型及其子业务模块树上已启用「应归档数据」的 BASIC 扩展字段并集，具体列以模板为准（硬编码扩展已废弃，凡在业务模块配置的应归档字段均可出现在模板中）。' +
+      '请使用 UTF-8 CSV 上传；提交后在「我的工作空间 → 我的导入」查看进度，结果 Excel 第二页「成功明细」仅含主档字段。'
+    )
   }
   if (batchDialog.mode === 'UPDATE') {
-    return '请下载模板文件，按列填写后上传 CSV。将按 docId 更新匹配行（演示：仅作用于当前列表）。'
+    return (
+      '模板与批量创建相同：核心列含文档业务编码、公司、业务模块、开始档期等，扩展列以当前文档类型配置为准。' +
+      '系统按「文档业务编码 + 公司 + 业务模块 + 开始档期」定位唯一一条正式未归档文档，仅填写需修改的列即可；无法唯一定位时该行标记为失败。' +
+      '请使用 UTF-8 CSV 上传；提交后在「我的工作空间 → 我的导入」查看进度并下载结果 Excel（含成功明细）。'
+    )
   }
-  return '请下载模板文件，按6列填写后上传。每行至少填写「文档业务编码/发票号/其他相关编号」之一；行内按且（AND），逐行结果合并。'
+  return (
+    '模板须含列：文档业务编码、公司、业务模块、开始档期（与批量创建模板核心段一致；扩展列以各业务模块配置为准）。' +
+    '每行至少填写「文档业务编码」；若需按发票号/其他编号查，可自行在表头追加「发票号」「其他相关编号」列。' +
+    '行内条件为且（AND），逐行结果合并。'
+  )
 })
 
 const batchDownloadFileName = computed(() => {
@@ -834,24 +1048,56 @@ const batchDownloadFileName = computed(() => {
     const slug = (filters.documentTypeCode || 'doc').replace(/[^\w-]+/g, '_')
     return `pending-archive-batch-create-${slug}-${d}.csv`
   }
-  if (batchDialog.mode === 'UPDATE') return `pending-archive-batch-update-${d}.csv`
+  if (batchDialog.mode === 'UPDATE') {
+    const slug = (filters.documentTypeCode || 'doc').replace(/[^\w-]+/g, '_')
+    return `pending-archive-batch-update-${slug}-${d}.csv`
+  }
   return `pending-archive-import-query-${d}.csv`
 })
 
 const batchCreateTemplateCsv = ref('')
+const batchTemplatePreparing = ref(false)
+
+/** 优先拉取服务端模板（避免浏览器缓存旧 JS）；失败时回退前端生成 */
+async function refreshBatchCreateTemplateCsv() {
+  const docType = filters.documentTypeCode?.trim()
+  if (!docType) return
+  const ctx = {
+    documentTypeCode: docType,
+    documentTypeName: selectedDocTypeName.value || '',
+    companyProjectCode: filters.companyCode || undefined,
+    archiveTypeCode: filters.archiveTypeCodes?.[0] || undefined
+  }
+  try {
+    batchCreateTemplateCsv.value = await fetchPendingBatchImportTemplateCsv({
+      documentTypeCode: docType,
+      companyProjectCode: filters.companyCode || undefined,
+      archiveTypeCode: filters.archiveTypeCodes?.[0] || undefined,
+      documentTypeName: selectedDocTypeName.value || undefined
+    })
+    return
+  } catch {
+    /* 后端不可用或非 200 */
+  }
+  batchCreateTemplateCsv.value = buildCoreOnlyPendingBatchTemplateCsv(ctx)
+  try {
+    batchCreateTemplateCsv.value = await buildPendingArchiveBatchImportTemplateCsv(ctx)
+  } catch {
+    /* 保持仅核心列 */
+  }
+}
 
 const batchDialogSample = computed(() => {
   if (batchDialog.mode === 'CREATE') {
     return batchCreateTemplateCsv.value
   }
   if (batchDialog.mode === 'UPDATE') {
-    return ['docId,documentName,docStatus,owner,creationTime,createdBy', 'DOC-20231024-001,会计凭证 0002AP00001,未归档,系统,2023-10-25 09:00,系统'].join('\n')
+    return batchCreateTemplateCsv.value
   }
   return [
-    '文档业务编码,发票号,其他相关编号,公司,业务模块,开始档期',
-    'FUND-DEMO-2026-001,,,CP-DEMO-001,FIN_FUND_PAYMENT_PAY,2026-04',
-    ',INV-DEMO-0002,,CP-DEMO-001,FIN_FUND_PAYMENT_PAY,2026-04',
-    ',,REF-2026-003,CP-DEMO-001,FIN_FUND_PAYMENT_PAY,2026-04'
+    '文档业务编码,公司,业务模块,开始档期',
+    'FUND-DEMO-2026-001,CP-DEMO-001,FIN_FUND_PAYMENT_PAY,2026-04',
+    'FUND-DEMO-2026-002,CP-DEMO-001,FIN_FUND_PAYMENT_PAY,2026-04'
   ].join('\n')
 })
 
@@ -862,161 +1108,41 @@ watch(
       batchDialog.mode,
       filters.documentTypeCode,
       filters.companyCode,
-      filters.archiveTypeCode,
+      filters.archiveTypeCodes,
       selectedDocTypeName.value
     ] as const,
-  async ([open, mode, docType, companyCode, archiveTypeCode, typeName]) => {
-    if (!open || mode !== 'CREATE' || !docType?.trim()) {
+  async ([open, mode]) => {
+    if (!open || (mode !== 'CREATE' && mode !== 'UPDATE') || !filters.documentTypeCode?.trim()) {
       return
     }
-    try {
-      batchCreateTemplateCsv.value = await buildPendingArchiveBatchImportTemplateCsv({
-        documentTypeCode: docType,
-        documentTypeName: typeName || '',
-        companyProjectCode: companyCode || undefined,
-        archiveTypeCode: archiveTypeCode || undefined
-      })
-    } catch {
-      batchCreateTemplateCsv.value = buildCoreOnlyPendingBatchTemplateCsv({
-        documentTypeCode: docType,
-        documentTypeName: typeName || '',
-        companyProjectCode: companyCode || undefined,
-        archiveTypeCode: archiveTypeCode || undefined
-      })
-    }
+    await refreshBatchCreateTemplateCsv()
   }
 )
 
-const openBatchDialog = (mode: BatchMode) => {
+const openBatchDialog = async (mode: BatchMode) => {
   if (!docTypeReady.value) return
   batchDialog.mode = mode
-  batchDialog.open = true
   batchDialog.file = null
   batchDialog.loading = false
-  if (mode === 'CREATE' && filters.documentTypeCode?.trim()) {
-    batchCreateTemplateCsv.value = buildCoreOnlyPendingBatchTemplateCsv({
-      documentTypeCode: filters.documentTypeCode,
-      documentTypeName: selectedDocTypeName.value || '',
-      companyProjectCode: filters.companyCode || undefined,
-      archiveTypeCode: filters.archiveTypeCode || undefined
-    })
+  if (mode === 'CREATE' || mode === 'UPDATE') {
+    batchTemplatePreparing.value = true
+    try {
+      await refreshBatchCreateTemplateCsv()
+    } finally {
+      batchTemplatePreparing.value = false
+    }
+    if (!batchCreateTemplateCsv.value.trim()) {
+      ElMessage.warning('模板未加载成功，请确认后端已启动且可访问批量模板接口')
+      return
+    }
   }
+  batchDialog.open = true
 }
 
 const handleBatchModalConfirm = async (payload: { file: File | null; operationRemark?: string; auditAttachments?: PendingAuditAttachmentRef[] }) => {
   if (!payload.file) return
   batchDialog.file = payload.file
   await confirmBatchDialog(payload.operationRemark, payload.auditAttachments)
-}
-
-const readTextFile = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsText(file)
-  })
-
-const parseCsv = (csv: string) => {
-  const lines = csv
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-  if (lines.length === 0) return { headers: [] as string[], rows: [] as string[][] }
-  const splitLine = (line: string) => line.split(',').map((c) => c.trim())
-  const headers = splitLine(lines[0]).map((h) => h.replace(/^"|"$/g, ''))
-  const body = lines.slice(1).map((l) => splitLine(l).map((c) => c.replace(/^"|"$/g, '')))
-  return { headers, rows: body }
-}
-
-const currentDateTime = () => {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
-const currentYearMonth = () => {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
-}
-
-const docGenerationToDateTime = (v: string | undefined) => {
-  const t = String(v || '').trim()
-  if (!t) return currentDateTime()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return `${t} 00:00:00`
-  if (/^\d{4}-\d{2}$/.test(t)) return `${t}-01 00:00:00`
-  if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(t)) return t
-  return currentDateTime()
-}
-
-const idxBy = (headers: string[], name: string) => headers.findIndex((h) => h === name)
-const getBy = (headers: string[], row: string[], name: string) => {
-  const i = idxBy(headers, name)
-  return i >= 0 ? row[i] : ''
-}
-
-const applyBatchUpdate = async (headers: string[], dataRows: string[][], operationRemark?: string, auditAttachments?: PendingAuditAttachmentRef[]) => {
-  let updated = 0
-  let failed = 0
-  for (const row of dataRows) {
-    const docId = Number(getBy(headers, row, 'docId').trim())
-    if (!Number.isFinite(docId) || docId <= 0) {
-      failed += 1
-      continue
-    }
-    try {
-      const d = await getArchiveDetail(docId)
-      const sec = resolvePendingSecurityFields(getBy(headers, row, 'securityLevel').trim() || d.securityLevelCode || '')
-      const startPeriod = getBy(headers, row, 'startPeriod').trim() || d.beginPeriod || currentYearMonth()
-      const endPeriod = getBy(headers, row, 'endPeriod').trim() || d.endPeriod || startPeriod
-      const archiveDestination = getBy(headers, row, 'archivePlace').trim() || d.archiveDestination || 'SHANGHAI'
-      const originPlace = getBy(headers, row, 'originPlace').trim() || d.originPlace || archiveDestination
-      const documentName = getBy(headers, row, 'documentName').trim() || d.documentName
-      const dutyPerson = getBy(headers, row, 'owner').trim() || d.dutyPerson
-      const dutyDepartment = getBy(headers, row, 'responsibleDept').trim() || d.dutyDepartment || undefined
-      const docOrganization = getBy(headers, row, 'docOrganization').trim() || d.documentOrganizationCode
-      const carrierTypeCode = getBy(headers, row, 'carrierType').trim() || d.carrierTypeCode || 'ELECTRONIC'
-      const sourceSystem = getBy(headers, row, 'sourceSystem').trim() || d.sourceSystem || 'PORTAL'
-      const remark = getBy(headers, row, 'description').trim() || d.remark || undefined
-      const extValues = { ...(d.extValues || {}) }
-      const visibility = getBy(headers, row, 'visibility').trim()
-      if (visibility) extValues.visibility = visibility
-      await updatePendingDocument(docId, {
-        operatorUserId: 1,
-        documentTypeCode: d.documentTypeCode || filters.documentTypeCode,
-        companyProjectCode: d.companyProjectCode || filters.companyCode || '',
-        archiveTypeCode: d.businessModuleTypeCode || filters.archiveTypeCode || '',
-        businessCode: getBy(headers, row, 'businessCode').trim() || d.businessCode || undefined,
-        beginPeriod: startPeriod,
-        endPeriod,
-        archiveDestination,
-        originPlace,
-        documentName,
-        documentDate: docGenerationToDateTime(getBy(headers, row, 'docGenerationDate') || String(d.documentDate || '')),
-        dutyPerson,
-        dutyDepartment,
-        carrierTypeCode,
-        sourceSystem,
-        securityLevelCode: sec.securityLevelCode || d.securityLevelCode || 'INTERNAL',
-        remark,
-        documentOrganizationCode: docOrganization,
-        retentionPeriodYears: d.retentionPeriodYears,
-        submitMode: 'SUBMIT',
-        operationRemark,
-        operationTypeCode: 'BATCH_UPDATE',
-        auditAttachments,
-        extValues
-      })
-      updated += 1
-    } catch {
-      failed += 1
-    }
-  }
-  await runQuery()
-  if (updated > 0 && failed > 0) ElMessage.warning(`已更新 ${updated} 条，失败 ${failed} 条`)
-  else if (updated > 0) ElMessage.success(`已更新 ${updated} 条`)
-  else ElMessage.warning('未更新成功，请检查模板数据')
 }
 
 const applyImportQuery = async (file: File) => {
@@ -1049,14 +1175,18 @@ const confirmBatchDialog = async (operationRemark?: string, auditAttachments?: P
       batchDialog.open = false
       return
     }
-    const text = await readTextFile(batchDialog.file)
-    const { headers, rows: dataRows } = parseCsv(text)
-    if (headers.length === 0) {
-      ElMessage.warning('CSV 文件为空或格式不正确')
+    if (batchDialog.mode === 'UPDATE') {
+      await submitPendingArchiveBatchAdjust({
+        file: batchDialog.file,
+        documentTypeCode: filters.documentTypeCode!,
+        operationRemark,
+        auditAttachments
+      })
+      ElMessage.success('已提交应归档批量更新，请前往「我的工作空间 → 我的导入」查看进度并下载结果')
+      batchDialog.open = false
       return
     }
-    if (batchDialog.mode === 'UPDATE') await applyBatchUpdate(headers, dataRows, operationRemark, auditAttachments)
-    else await applyImportQuery(batchDialog.file)
+    await applyImportQuery(batchDialog.file)
     batchDialog.open = false
   } catch (e: any) {
     ElMessage.error(e?.message || '处理失败')
@@ -1160,7 +1290,7 @@ const resolvePendingDetailExportValue = (row: ArchiveRecordSummary, prop: string
   if (prop === 'companyProjectName') return row?.companyProjectName || row?.companyProjectCode || ''
   if (prop === 'documentTypeName') return row?.documentTypeName || row?.documentTypeCode || ''
   if (prop === 'documentVisibility') return row?.documentVisibility ?? ext.visibility ?? '是'
-  if (prop === 'custodyStatus') return row?.custodyStatus || row?.archiveStatus || ''
+  if (prop === 'custodyStatus') return row?.custodyStatus || ''
   return (row as any)?.[prop] ?? ''
 }
 
@@ -1207,19 +1337,25 @@ const exportCsv = async () => {
     ElMessage.warning('暂无可导出的数据')
     return
   }
-  const ids = data
-    .map((r) => Number(r.docId))
-    .filter((n) => Number.isFinite(n) && n > 0)
-  if (!ids.length) {
+  const docIds = collectExportDocIdStrings(data)
+  if (!docIds.length) {
     ElMessage.warning('未找到可导出的文档标识')
     return
   }
-  await createPendingDocumentsExportJob({
-    docIds: ids,
-    exportFileFormat: 'CSV',
-    exportScope: 'PENDING_ARCHIVE'
-  })
-  exportSuccessVisible.value = true
+  exporting.value = true
+  try {
+    await createPendingDocumentsExportJob({
+      docIds,
+      exportFileFormat: 'CSV',
+      exportScope: 'PENDING_ARCHIVE'
+    })
+    exportSuccessVisible.value = true
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '导出失败'
+    ElMessage.error(msg)
+  } finally {
+    exporting.value = false
+  }
 }
 
 const handleColumnSettingClick = () => {
@@ -1256,10 +1392,6 @@ onActivated(() => {
   tableFullPage.value = false
 })
 
-const goMyExports = () => {
-  exportSuccessVisible.value = false
-  router.push('/workspace/export-query')
-}
 </script>
 
 <style scoped>
@@ -1343,6 +1475,15 @@ const goMyExports = () => {
   font-size: 14px;
   color: var(--f02-text-sec);
   margin-bottom: 6px;
+}
+.f02-field label.module-ext-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.module-ext-scope-tag {
+  flex-shrink: 0;
 }
 .f02-required {
   color: #ef4444;

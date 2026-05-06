@@ -24,14 +24,17 @@
           <div class="f02-field">
             <label>业务模块</label>
             <el-tree-select
-              v-model="query.archiveTypeCode"
+              v-model="query.archiveTypeCodes"
               :data="businessModuleTreeOptions"
+              multiple
               filterable
               clearable
+              collapse-tags
+              collapse-tags-tooltip
               check-strictly
               default-expand-all
               :render-after-expand="false"
-              placeholder="请选择业务模块"
+              placeholder="可多选"
               class="f02-control"
               node-key="moduleCode"
               :props="{ value: 'moduleCode', label: 'queryLabel', children: 'children' }"
@@ -44,7 +47,15 @@
           </div>
           <div class="f02-field">
             <label>载体类型</label>
-            <el-select v-model="query.carrierTypeCode" clearable placeholder="请选择" class="f02-control">
+            <el-select
+              v-model="query.carrierTypeCodes"
+              multiple
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="可多选"
+              class="f02-control"
+            >
               <el-option v-for="item in options.carrierTypes" :key="item.code" :label="item.name" :value="item.code" />
             </el-select>
           </div>
@@ -84,8 +95,47 @@
           </div>
           <div v-for="field in visibleMoreFilterFields" :key="field.key" class="f02-field">
             <label>{{ field.label }}</label>
+            <el-cascader
+              v-if="field.type === 'cascader' && field.optionSource === 'archiveDestinationCascader'"
+              v-model="archiveDestinationMorePath"
+              :options="archiveDestinationCascaderOptions"
+              :props="{ value: 'value', label: 'label', children: 'children', emitPath: true, checkStrictly: true }"
+              clearable
+              filterable
+              :placeholder="field.placeholder || '请选择国家/省份/城市'"
+              class="f02-control"
+              style="width: 100%"
+            />
             <el-select
-              v-if="field.type === 'select'"
+              v-else-if="field.optionSource === 'geoCountries'"
+              v-model="(advancedFilters as any)[field.key]"
+              clearable
+              filterable
+              :placeholder="field.placeholder || '请选择国家'"
+              class="f02-control"
+            >
+              <el-option v-for="item in options.geoCountries" :key="item.code" :label="item.name" :value="item.code" />
+            </el-select>
+            <el-select
+              v-else-if="field.optionSource === 'barcodeModules'"
+              v-model="(advancedFilters as any).barcodeModuleCodes"
+              multiple
+              clearable
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              :placeholder="field.placeholder || '请选择'"
+              class="f02-control"
+            >
+              <el-option
+                v-for="b in barcodeModuleOptions"
+                :key="b.barcodeCode"
+                :label="`${b.barcodeCode} ｜ ${b.barcodeName}`"
+                :value="b.barcodeCode"
+              />
+            </el-select>
+            <el-select
+              v-else-if="field.type === 'select'"
               v-model="(advancedFilters as any)[field.key]"
               clearable
               filterable
@@ -122,7 +172,10 @@
             />
           </div>
           <div v-for="field in moduleExtFilterFields" :key="`ext-${field.fieldCode}`" class="f02-field">
-            <label>{{ field.fieldName }}</label>
+            <label class="module-ext-filter-label">
+              <span>{{ field.fieldName }}</span>
+              <el-tag v-if="field.fieldScope === 'ATTACHMENT'" size="small" effect="light" type="primary" class="module-ext-scope-tag">附件</el-tag>
+            </label>
             <el-input
               v-model="queryExtFilters[field.fieldCode]"
               clearable
@@ -146,7 +199,7 @@
           <el-icon class="el-icon--left"><Search /></el-icon>
           批量导入查询
         </el-button>
-        <el-button @click="exportCsv" :disabled="!docTypeReady">批量导出</el-button>
+        <el-button @click="exportCsv" :disabled="!docTypeReady" :loading="exporting">批量导出</el-button>
       </div>
       <div class="f02-toolbar__right">
         <el-tooltip content="列设置" placement="top">
@@ -251,17 +304,14 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="exportSuccessVisible" title="提示" width="460px">
-      <div class="export-success-tip">
-        导出提交成功，系统正在处理，稍后请到
-        <el-link type="primary" @click="goMyExports">我的导出</el-link>
-        中查看导出结果。
-      </div>
+    <el-dialog v-model="exportSuccessVisible" title="导出成功" width="440px" destroy-on-close>
+      <p class="export-success-tip">导出成功，请到我的导出查看并下载 CSV 文件。</p>
       <template #footer>
         <el-button @click="exportSuccessVisible = false">关闭</el-button>
         <el-button type="primary" @click="goMyExports">前往我的导出</el-button>
       </template>
     </el-dialog>
+
     </div>
   </div>
 </template>
@@ -272,6 +322,7 @@ import { ElMessage } from 'element-plus'
 import { onActivated, onMounted, reactive, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createPendingDocumentsExportJob, fetchArchiveCreateOptions, queryArchives, submitArchiveImportQueryJob, type ArchiveQueryCommand } from '../../api/modules/archiveManagement'
+import { resolveCustodyStatusLabelOptions } from './archiveCustodyStatusOptions'
 import {
   buildModuleQueryTree,
   fetchBusinessModuleExtFields,
@@ -283,13 +334,26 @@ import {
 } from '../../api/modules/businessModule'
 import { fetchCompanyInfos } from '../../api/modules/companyInfo'
 import { fetchUsers } from '../../api/modules/security'
-import type { ArchiveCreateOptions, ArchiveQueryResult, BusinessModuleExtField, BusinessModuleNode } from '../../types'
+import { fetchBarcodeModules } from '../../api/modules/barcodeModule'
+import { fetchCountryRegions } from '../../api/modules/countryRegion'
+import type {
+  ArchiveCreateOptions,
+  ArchiveQueryResult,
+  BarcodeModule,
+  BusinessModuleExtField,
+  BusinessModuleNode,
+  CountryRegionItem
+} from '../../types'
 import type { User } from '../../api/modules/security'
 import { validateMultiValueInput } from '../../utils/multiValueQuery'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import F03BatchImportModal from '../../components/f03/F03BatchImportModal.vue'
 import F03MultiLineFilterInput from '../../components/f03/F03MultiLineFilterInput.vue'
 import { archiveQueryPageConfig, getVisibleMoreFilterFields } from './queryPageConfig'
+import {
+  buildArchiveDestinationCascaderOptions,
+  buildArchiveDestinationPath
+} from '../../utils/archiveFlowAlignedFieldUtils'
 import { EXT_DETAIL_FIELD_ORDER, hardCodedExtLabelMap, isHardCodedFieldVisible } from './extFieldDisplayConfig'
 
 const route = useRoute()
@@ -310,7 +374,12 @@ const options = reactive<ArchiveCreateOptions>({
   custodyStatuses: []
 })
 
-type ArchiveQueryCommandWithPage = ArchiveQueryCommand & { page: number; pageSize: number }
+type ArchiveQueryCommandWithPage = ArchiveQueryCommand & {
+  page: number
+  pageSize: number
+  archiveTypeCodes: string[]
+  carrierTypeCodes: string[]
+}
 
 const layout = useLayoutStore()
 
@@ -318,8 +387,8 @@ const query = reactive<ArchiveQueryCommandWithPage>({
   keyword: '',
   documentTypeCode: '',
   companyProjectCode: '',
-  archiveTypeCode: '',
-  carrierTypeCode: '',
+  archiveTypeCodes: [],
+  carrierTypeCodes: [],
   securityLevelCode: '',
   documentName: '',
   businessCode: '',
@@ -338,6 +407,58 @@ const userDisplayById = computed<Record<string, string>>(() =>
 )
 const businessModuleSourceTree = ref<BusinessModuleNode[]>([])
 const businessModuleTreeOptions = ref<ModuleQueryTreeNode[]>([])
+const barcodeModuleOptions = ref<BarcodeModule[]>([])
+const archiveDestinationMorePath = ref<string[]>([])
+const regionCountryOptions = ref<CountryRegionItem[]>([])
+const regionProvinceOptions = ref<CountryRegionItem[]>([])
+const regionCityOptions = ref<CountryRegionItem[]>([])
+const archiveDestinationCascaderOptions = computed(() =>
+  buildArchiveDestinationCascaderOptions(
+    regionCountryOptions.value,
+    regionProvinceOptions.value,
+    regionCityOptions.value
+  )
+)
+
+const syncArchiveDestinationPathFromAdvanced = () => {
+  const code = String(advancedFilters.archiveDestination || '').trim()
+  archiveDestinationMorePath.value = code
+    ? buildArchiveDestinationPath(code, regionCountryOptions.value, regionProvinceOptions.value, regionCityOptions.value)
+    : []
+}
+
+watch(archiveDestinationMorePath, (path) => {
+  if (!path?.length) {
+    advancedFilters.archiveDestination = ''
+    return
+  }
+  advancedFilters.archiveDestination = path[path.length - 1] || ''
+})
+
+async function loadArchiveDestinationRegionTree() {
+  try {
+    const countries = await fetchCountryRegions({ regionLevel: 'COUNTRY' })
+    const countryCodes = countries.map((c) => c.regionCode).filter(Boolean)
+    const provincesNested = await Promise.all(
+      countryCodes.map((cc) => fetchCountryRegions({ regionLevel: 'PROVINCE', parentRegionCode: cc }))
+    )
+    const provinces = provincesNested.flat()
+    const provinceCodes = provinces.map((p) => p.regionCode).filter(Boolean)
+    const citiesNested = await Promise.all(
+      provinceCodes.map((pc) => fetchCountryRegions({ regionLevel: 'CITY', parentRegionCode: pc }))
+    )
+    const cities = citiesNested.flat()
+    regionCountryOptions.value = countries
+    regionProvinceOptions.value = provinces
+    regionCityOptions.value = cities
+    syncArchiveDestinationPathFromAdvanced()
+  } catch {
+    regionCountryOptions.value = []
+    regionProvinceOptions.value = []
+    regionCityOptions.value = []
+    archiveDestinationMorePath.value = []
+  }
+}
 const docTypeReady = computed(() => Boolean(query.documentTypeCode && query.documentTypeCode.trim()))
 const selectedDocTypeName = computed(() => {
   const item = options.documentTypes.find((d) => d.code === query.documentTypeCode)
@@ -347,9 +468,11 @@ const showMoreFilters = ref(false)
 const periodRange = ref<[string, string] | null>(null)
 const docGenerationRange = ref<[string, string] | null>(null)
 const advancedFilters = reactive<Record<string, any>>({
-  country: [],
-  repOffice: [],
-  region: [],
+  barcodeModuleCodes: [] as string[],
+  documentArchiveTypes: [] as string[],
+  country: '',
+  repOffice: '',
+  region: '',
   custodyStatus: [],
   securityLevelCode: [],
   description: '',
@@ -360,10 +483,11 @@ const advancedFilters = reactive<Record<string, any>>({
   createdBy: '',
   creationDateRange: null,
   sourceSystem: [],
-  visibility: [],
+  visibility: '' as string,
   archivedEntityName: '',
-  barcodeModule: '',
   archiveBarcodeRange: '',
+  signDateRange: null as [string, string] | null,
+  signedBy: '' as string,
   verificationDateRange: null,
   verifiedBy: [] as string[],
   volumeSeqNo: '',
@@ -377,7 +501,6 @@ const advancedFilters = reactive<Record<string, any>>({
   storedBy: [] as string[],
   copies: '',
   remainingCopies: '',
-  archiveType: '',
   invoiceNo: '',
   refNo: '',
   accountant: [] as string[],
@@ -399,19 +522,56 @@ const advancedFilters = reactive<Record<string, any>>({
 const visibleMoreFilterFields = computed(() =>
   getVisibleMoreFilterFields(archiveQueryPageConfig.moreFilterFields, selectedDocTypeName.value)
 )
-const moreFieldOptionsMap = computed<Record<string, Array<{ label: string; value: string }>>>(() => ({
-  country: options.geoCountries.map((item) => ({ label: item.name, value: item.code })),
-  repOffice: options.geoRepOffices.map((item) => ({ label: item.name, value: item.name })),
-  region: options.geoRegions.map((item) => ({ label: item.name, value: item.name })),
-  custodyStatus: options.custodyStatuses.map((item) => ({ label: item.name, value: item.code })),
-  securityLevelCode: options.securityLevels.map((item) => ({ label: item.name, value: item.code })),
-  sourceSystem: [],
-  verifiedBy: userSelectOptions.value,
-  assembledBy: userSelectOptions.value,
-  storedBy: userSelectOptions.value,
-  accountant: userSelectOptions.value,
-  scannedBy: userSelectOptions.value
-}))
+const moreFieldOptionsMap = computed<Record<string, Array<{ label: string; value: string }>>>(() => {
+  const cc = String(advancedFilters.country || '').trim()
+  const repSrc = cc
+    ? options.geoRepOffices.filter((item) => String(item.code || '') === cc)
+    : options.geoRepOffices
+  const regSrc = cc
+    ? options.geoRegions.filter((item) => String(item.code || '') === cc)
+    : options.geoRegions
+  return {
+    country: options.geoCountries.map((item) => ({ label: item.name, value: item.code })),
+    repOffice: repSrc.map((item) => ({ label: item.name, value: item.name })),
+    region: regSrc.map((item) => ({ label: item.name, value: item.name })),
+    documentArchiveTypes: options.archiveTypes.map((item) => ({ label: item.name, value: item.code })),
+    custodyStatus: options.custodyStatuses.map((item) => ({ label: item.name, value: item.code })),
+    signedBy: userSelectOptions.value,
+    securityLevelCode: options.securityLevels.map((item) => ({ label: item.name, value: item.code })),
+    sourceSystem: [],
+    verifiedBy: userSelectOptions.value,
+    assembledBy: userSelectOptions.value,
+    storedBy: userSelectOptions.value,
+    accountant: userSelectOptions.value,
+    scannedBy: userSelectOptions.value,
+    visibility: [
+      { label: '是', value: '是' },
+      { label: '否', value: '否' }
+    ]
+  }
+})
+
+watch(
+  () => advancedFilters.country,
+  (next) => {
+    const cc = String(next || '').trim()
+    if (!cc) {
+      advancedFilters.repOffice = ''
+      advancedFilters.region = ''
+      return
+    }
+    const repNames = new Set(
+      options.geoRepOffices.filter((o) => String(o.code || '') === cc).map((o) => o.name)
+    )
+    const regNames = new Set(
+      options.geoRegions.filter((o) => String(o.code || '') === cc).map((o) => o.name)
+    )
+    const ro = String(advancedFilters.repOffice || '').trim()
+    const rg = String(advancedFilters.region || '').trim()
+    if (ro && !repNames.has(ro)) advancedFilters.repOffice = ''
+    if (rg && !regNames.has(rg)) advancedFilters.region = ''
+  }
+)
 
 const moduleExtFilterFields = ref<BusinessModuleExtField[]>([])
 const queryExtFilters = reactive<Record<string, string>>({})
@@ -427,11 +587,33 @@ const columnSearchKeyword = ref('')
 const columnDraftKeys = ref<string[]>([...archiveQueryPageConfig.defaultVisibleColumns])
 const importQueryDialogVisible = ref(false)
 const importing = ref(false)
+const exporting = ref(false)
 const exportSuccessVisible = ref(false)
 
-const importQueryTemplateCsv = '文档业务编码,发票号,其他相关编号,公司,业务模块,开始档期\n'
+function collectExportDocIdStrings(rows: Iterable<{ docId?: unknown; archiveId?: unknown; id?: unknown }>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const r of rows) {
+    const raw = r.docId ?? r.archiveId ?? r.id
+    if (raw == null) continue
+    const s = String(raw).trim()
+    if (!/^\d+$/.test(s)) continue
+    if (seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+  }
+  return out
+}
+
+const goMyExports = () => {
+  exportSuccessVisible.value = false
+  router.push('/workspace/export-query')
+}
+
+const importQueryTemplateCsv =
+  ['文档业务编码,公司,业务模块,开始档期', 'DEMO-BIZ-001,CP-DEMO-001,GL,2024-01', 'DEMO-BIZ-002,CP-DEMO-001,GL,2024-01'].join('\n') + '\n'
 const importQueryModalHint =
-  '模板固定 6 列；每行至少填写「文档业务编码/发票号/其他相关编号」之一。行内条件为且（AND），逐行查询后合并为最终结果。'
+  '模板须含列：文档业务编码、公司、业务模块、开始档期。每行至少填写「文档业务编码」；若需按发票号/其他编号查，可自行追加「发票号」「其他相关编号」列。行内为且（AND），逐行合并结果。'
 const importQueryDownloadFileName = computed(() => {
   const d = new Date().toISOString().slice(0, 10)
   return `archive-query-import-${d}.csv`
@@ -463,13 +645,17 @@ const formatDateTime = (value: unknown) => {
 const isDateTimeColumn = (prop: string) => ['documentDate', 'creationDate', 'lastUpdateDate'].includes(prop)
 
 const loadOptions = async () => {
-  const [result, companies, moduleTree, users] = await Promise.all([
+  const [result, companies, moduleTree, users, barcodeMods] = await Promise.all([
     fetchArchiveCreateOptions(),
     fetchCompanyInfos({ enabledFlag: 'Y' }),
     fetchBusinessModuleTree().catch((): BusinessModuleNode[] => []),
-    fetchUsers().catch((): User[] => [])
+    fetchUsers().catch((): User[] => []),
+    fetchBarcodeModules({ enabledOnly: true }).catch((): BarcodeModule[] => [])
   ])
+  barcodeModuleOptions.value = barcodeMods
   Object.assign(options, result)
+  options.custodyStatuses = await resolveCustodyStatusLabelOptions(options.custodyStatuses ?? [])
+  await loadArchiveDestinationRegionTree()
   companySelectOptions.value = companies.map((c) => ({ code: c.companyCode, name: c.companyName }))
   userSelectOptions.value = users
     .map((u) => {
@@ -491,15 +677,11 @@ const syncBusinessModuleOptionsByDocumentType = (documentTypeCode?: string) => {
     documentTypeCode || ''
   )
   businessModuleTreeOptions.value = buildModuleQueryTree(filtered)
-  if (
-    query.archiveTypeCode &&
-    !isModuleCodeWithinDocumentType(
-      businessModuleSourceTree.value,
-      documentTypeCode || '',
-      query.archiveTypeCode
+  const dt = documentTypeCode || ''
+  if (query.archiveTypeCodes?.length) {
+    query.archiveTypeCodes = query.archiveTypeCodes.filter((c) =>
+      isModuleCodeWithinDocumentType(businessModuleSourceTree.value, dt, c)
     )
-  ) {
-    query.archiveTypeCode = ''
   }
 }
 
@@ -510,37 +692,56 @@ const handleQueryTypeChange = async (typeCode?: string) => {
   Object.keys(queryExtFilters).forEach(key => delete queryExtFilters[key])
 }
 
-const handleArchiveTypeChange = async (next?: string) => {
-  const moduleCode = String(next || '').trim()
-  if (!moduleCode) {
+const handleArchiveTypeChange = async (next?: string | string[]) => {
+  const codes = (Array.isArray(next) ? next : next ? [next] : [])
+    .map((c) => String(c).trim())
+    .filter(Boolean)
+  if (!codes.length) {
     moduleExtFilterFields.value = []
-    Object.keys(queryExtFilters).forEach(key => delete queryExtFilters[key])
+    Object.keys(queryExtFilters).forEach((key) => delete queryExtFilters[key])
     return
   }
+  let primary = codes[0]
   if (query.documentTypeCode?.trim()) {
     if (
       !isModuleCodeWithinDocumentType(
         businessModuleSourceTree.value,
         query.documentTypeCode,
-        moduleCode
+        primary
       )
     ) {
-      const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+      const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, primary)
       if (rootDocType) {
         query.documentTypeCode = rootDocType
         await handleQueryTypeChange(rootDocType)
       } else {
-        query.archiveTypeCode = ''
+        query.archiveTypeCodes = []
+        moduleExtFilterFields.value = []
+        Object.keys(queryExtFilters).forEach((key) => delete queryExtFilters[key])
+        return
       }
     }
-    await loadModuleExtFilterFields(moduleCode)
+    const dt = query.documentTypeCode || ''
+    query.archiveTypeCodes = codes.filter((c) =>
+      isModuleCodeWithinDocumentType(businessModuleSourceTree.value, dt, c)
+    )
+    if (!query.archiveTypeCodes.length) {
+      moduleExtFilterFields.value = []
+      Object.keys(queryExtFilters).forEach((key) => delete queryExtFilters[key])
+      return
+    }
+    primary = query.archiveTypeCodes[0]
+    await loadModuleExtFilterFields(primary)
     return
   }
-  const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, moduleCode)
+  const rootDocType = resolveRootDocumentTypeCodeByModule(businessModuleSourceTree.value, primary)
   if (!rootDocType) return
   query.documentTypeCode = rootDocType
   await handleQueryTypeChange(rootDocType)
-  await loadModuleExtFilterFields(moduleCode)
+  query.archiveTypeCodes = codes.filter((c) =>
+    isModuleCodeWithinDocumentType(businessModuleSourceTree.value, rootDocType, c)
+  )
+  await loadModuleExtFilterFields(query.archiveTypeCodes[0] || primary)
 }
 
 const loadModuleExtFilterFields = async (moduleCode: string) => {
@@ -567,13 +768,17 @@ const loadModuleExtFilterFields = async (moduleCode: string) => {
 }
 
 const buildStringExtFilters = () => {
+  const sr = (advancedFilters as { signDateRange?: [string, string] | null }).signDateRange
   const normalized: Record<string, string> = {
     ...queryExtFilters,
     docGenerationStart: docGenerationRange.value?.[0] || '',
-    docGenerationEnd: docGenerationRange.value?.[1] || ''
+    docGenerationEnd: docGenerationRange.value?.[1] || '',
+    signDateStart: Array.isArray(sr) && sr[0] ? String(sr[0]).trim() : '',
+    signDateEnd: Array.isArray(sr) && sr[1] ? String(sr[1]).trim() : ''
   }
 
   Object.entries(advancedFilters).forEach(([key, value]) => {
+    if (key === 'barcodeModuleCodes' || key === 'documentArchiveTypes' || key === 'signDateRange') return
     if (value === null || value === undefined) return
     if (Array.isArray(value)) {
       const first = value.find((item) => item !== null && item !== undefined && String(item).trim() !== '')
@@ -604,8 +809,22 @@ const runQuery = async () => {
     ElMessage.warning(multiErr)
     return
   }
+  const extFilters = buildStringExtFilters()
+  const docArchiveTypes = Array.isArray((advancedFilters as any).documentArchiveTypes)
+    ? (advancedFilters as any).documentArchiveTypes.filter((c: unknown) => String(c ?? '').trim())
+    : []
+  if (docArchiveTypes.length) {
+    extFilters.archiveType = docArchiveTypes.join(',')
+  }
+  const queryFields = { ...query } as Record<string, unknown>
   const command: ArchiveQueryCommand = {
-    ...query,
+    ...(queryFields as unknown as typeof query),
+    archiveTypeCodes: query.archiveTypeCodes?.length ? [...query.archiveTypeCodes] : undefined,
+    carrierTypeCodes: query.carrierTypeCodes?.length ? [...query.carrierTypeCodes] : undefined,
+    barcodeModuleCodes:
+      Array.isArray((advancedFilters as any).barcodeModuleCodes) && (advancedFilters as any).barcodeModuleCodes.length
+        ? [...(advancedFilters as any).barcodeModuleCodes]
+        : undefined,
     beginPeriod: periodRange.value?.[0] || undefined,
     endPeriod: periodRange.value?.[1] || undefined,
     securityLevelCode:
@@ -618,7 +837,7 @@ const runQuery = async () => {
         : query.sourceSystem,
     archiveDestination: ((advancedFilters as any).archiveDestination as string) || query.archiveDestination,
     dutyPerson: ((advancedFilters as any).dutyPerson as string) || query.dutyPerson,
-    extFilters: buildStringExtFilters()
+    extFilters
   }
   try {
     const result = await queryArchives(command)
@@ -651,8 +870,8 @@ const resetFilters = async () => {
     keyword: '',
     documentTypeCode: '',
     companyProjectCode: '',
-    archiveTypeCode: '',
-    carrierTypeCode: '',
+    archiveTypeCodes: [],
+    carrierTypeCodes: [],
     securityLevelCode: '',
     documentName: '',
     businessCode: '',
@@ -666,19 +885,24 @@ const resetFilters = async () => {
   periodRange.value = null
   docGenerationRange.value = null
   Object.assign(advancedFilters, {
-    country: [],
-    repOffice: [],
-    region: [],
+    barcodeModuleCodes: [],
+    documentArchiveTypes: [],
+    country: '',
+    repOffice: '',
+    region: '',
     custodyStatus: [],
     description: '',
+    archiveDestination: '',
     originPlace: '',
     respDept: '',
     createdBy: '',
     creationDateRange: null,
-    visibility: [],
+    visibility: '' as string,
     archivedEntityName: '',
     barcodeModule: '',
     archiveBarcodeRange: '',
+    signDateRange: null,
+    signedBy: '',
     verificationDateRange: null,
     verifiedBy: [],
     volumeSeqNo: '',
@@ -692,7 +916,6 @@ const resetFilters = async () => {
     storedBy: [],
     copies: '',
     remainingCopies: '',
-    archiveType: [],
     invoiceNo: '',
     refNo: '',
     accountant: [],
@@ -711,9 +934,9 @@ const resetFilters = async () => {
     lgNo: '',
     securityLevelCode: [],
     sourceSystem: [],
-    archiveDestination: '',
     dutyPerson: ''
   })
+  archiveDestinationMorePath.value = []
   Object.keys(queryExtFilters).forEach(key => delete queryExtFilters[key])
   moduleExtFilterFields.value = []
   syncBusinessModuleOptionsByDocumentType('')
@@ -749,11 +972,9 @@ const viewArchiveDetail = (row: any) => {
   window.open(resolved.href, '_blank', 'noopener,noreferrer')
 }
 
-// 快捷筛选
+// 快捷筛选（仅预设条件，不自动发起查询）
 const filterForMyArchive = () => {
-  // 不再写死“当前用户”条件，避免把结果过滤为空
   query.dutyPerson = ''
-  runQuery()
 }
 
 const handleSelectionChange = (selection: any[]) => {
@@ -879,7 +1100,7 @@ const resolveDetailExportValue = (row: any, prop: string) => {
   if (prop === 'companyProjectName') return row?.companyProjectName || row?.companyProjectCode || ''
   if (prop === 'documentTypeName') return row?.documentTypeName || row?.documentTypeCode || ''
   if (prop === 'documentVisibility') return row?.documentVisibility ?? ext.visibility ?? '是'
-  if (prop === 'custodyStatus') return row?.custodyStatus || row?.archiveStatus || ''
+  if (prop === 'custodyStatus') return row?.custodyStatus || ''
   return row?.[prop] ?? ''
 }
 
@@ -926,19 +1147,25 @@ const exportCsv = async () => {
     ElMessage.warning('暂无可导出的数据')
     return
   }
-  const ids = data
-    .map((row: any) => Number(row.archiveId || row.docId))
-    .filter((v: number) => Number.isFinite(v) && v > 0)
-  if (!ids.length) {
+  const docIds = collectExportDocIdStrings(data)
+  if (!docIds.length) {
     ElMessage.warning('未找到可导出文档标识')
     return
   }
-  await createPendingDocumentsExportJob({
-    docIds: ids,
-    exportFileFormat: 'CSV',
-    exportScope: 'DOCUMENT_QUERY'
-  })
-  exportSuccessVisible.value = true
+  exporting.value = true
+  try {
+    await createPendingDocumentsExportJob({
+      docIds,
+      exportFileFormat: 'CSV',
+      exportScope: 'DOCUMENT_QUERY'
+    })
+    exportSuccessVisible.value = true
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '导出失败'
+    ElMessage.error(msg)
+  } finally {
+    exporting.value = false
+  }
 }
 
 const applyImportQuery = async (file: File) => {
@@ -973,8 +1200,6 @@ onMounted(async () => {
   await loadOptions()
   if (route.query.mine === '1') {
     filterForMyArchive()
-  } else {
-    await runQuery()
   }
 })
 
@@ -991,11 +1216,6 @@ watch(
   },
   { deep: true }
 )
-
-const goMyExports = () => {
-  exportSuccessVisible.value = false
-  router.push('/workspace/export-query')
-}
 </script>
 
 <style scoped>
@@ -1045,6 +1265,15 @@ const goMyExports = () => {
   font-size: 14px;
   color: var(--f02-text-sec);
   margin-bottom: 6px;
+}
+.f02-field label.module-ext-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.module-ext-scope-tag {
+  flex-shrink: 0;
 }
 .f02-required {
   color: #ef4444;

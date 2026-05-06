@@ -30,7 +30,13 @@
                 <p class="f03-batch-modal__template-desc">
                   {{ hint }}
                 </p>
-                <button type="button" class="f03-batch-modal__download" @click="downloadTemplate">
+                <button
+                  type="button"
+                  class="f03-batch-modal__download"
+                  :disabled="!templateCsvReady"
+                  :title="templateCsvReady ? '' : '模板内容尚未就绪，请稍候再试'"
+                  @click="downloadTemplate"
+                >
                   <el-icon :size="16"><Download /></el-icon>
                   下载导入模板
                 </button>
@@ -158,6 +164,7 @@ const selectedFile = ref<File | null>(null)
 const operationRemark = ref('')
 const auditAttachments = ref<Array<{ fileId: number; fileName?: string; storageKey?: string; fileSize?: number }>>([])
 const selectedName = computed(() => selectedFile.value?.name ?? '')
+const templateCsvReady = computed(() => (props.templateCsv ?? '').trim().length > 0)
 
 watch(
   () => props.modelValue,
@@ -198,7 +205,11 @@ const onFileRemove = () => {
 }
 
 const downloadTemplate = () => {
-  const raw = props.templateCsv || ''
+  const raw = (props.templateCsv || '').trim()
+  if (!raw) {
+    ElMessage.warning('模板尚未加载完成，请稍候再下载')
+    return
+  }
   const blob = new Blob(['\uFEFF' + raw], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

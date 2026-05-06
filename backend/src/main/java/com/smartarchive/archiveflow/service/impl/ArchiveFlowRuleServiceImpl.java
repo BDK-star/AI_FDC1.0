@@ -12,6 +12,8 @@ import com.smartarchive.archiveflow.dto.ArchiveRuleMatchResponse;
 import com.smartarchive.archiveflow.mapper.ArchiveFlowLookupMapper;
 import com.smartarchive.archiveflow.mapper.ArchiveFlowRuleMapper;
 import com.smartarchive.archiveflow.service.ArchiveFlowRuleService;
+import com.smartarchive.archivemanage.dto.ArchiveDefaultResolveResponse;
+import com.smartarchive.archivemanage.service.ArchiveManagementService;
 import com.smartarchive.businessmodule.domain.BusinessModule;
 import com.smartarchive.businessmodule.mapper.BusinessModuleMapper;
 import com.smartarchive.common.audit.service.OperationAuditService;
@@ -21,11 +23,9 @@ import com.smartarchive.companyinfo.mapper.CompanyInfoMapper;
 import com.smartarchive.countryregion.domain.CountryRegion;
 import com.smartarchive.countryregion.mapper.CountryRegionMapper;
 import java.time.LocalDateTime;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +47,7 @@ public class ArchiveFlowRuleServiceImpl implements ArchiveFlowRuleService {
     private final BusinessModuleMapper businessModuleMapper;
     private final CountryRegionMapper countryRegionMapper;
     private final OperationAuditService operationAuditService;
+    private final ArchiveManagementService archiveManagementService;
 
     @Override
     public List<ArchiveFlowRuleSummaryResponse> list(String keyword,
@@ -206,6 +207,22 @@ public class ArchiveFlowRuleServiceImpl implements ArchiveFlowRuleService {
     }
 
     @Override
+    public List<ArchiveFlowRuleOptionResponse> listMatchedArchiveDestinationOptions(String companyProjectCode,
+                                                                                    String busiModuleCode) {
+        String company = requireText(companyProjectCode, "companyProjectCode");
+        String module = requireText(busiModuleCode, "busiModuleCode");
+        ensureCompanyProjectAvailable(company);
+        validateType(module);
+        Map<String, String> cityDisplayMap = buildRegionDisplayMap();
+        return archiveManagementService.listCandidateArchiveDestinationsForFlow(company, module).stream()
+            .map(code -> ArchiveFlowRuleOptionResponse.builder()
+                .code(code)
+                .name(cityDisplayMap.getOrDefault(code, code))
+                .build())
+            .toList();
+    }
+
+    @Override
     public ArchiveFlowRulePermissionPreviewResponse getPermissionPreview() {
         return ArchiveFlowRulePermissionPreviewResponse.builder()
             .moduleCode(MODULE_CODE)
@@ -247,18 +264,17 @@ public class ArchiveFlowRuleServiceImpl implements ArchiveFlowRuleService {
             .last("limit 1"));
         String busiModuleName = businessModule != null ? businessModule.getModuleName() : module;
 
-        List<ArchiveFlowRule> rules = archiveFlowRuleMapper.selectList(new LambdaQueryWrapper<ArchiveFlowRule>()
-            .eq(ArchiveFlowRule::getCompanyProjectCode, company)
-            .eq(ArchiveFlowRule::getBusiModuleCode, module)
-            .eq(ArchiveFlowRule::getDeleteFlag, "N")
-            .eq(ArchiveFlowRule::getEnabledFlag, "Y")
-            .eq(ArchiveFlowRule::getDefaultFlag, "Y"));
+        ArchiveDefaultResolveResponse resolved = archiveManagementService.resolveDefaults(
+            company,
+            module,
+            trimToNull(customRule),
+            trimToNull(archiveDestination));
 
         Map<String, String> documentOrganizationNameMap = listActiveDocumentOrganizationCodes().stream()
             .collect(Collectors.toMap(Function.identity(), Function.identity(), (left, right) -> left));
         Map<String, String> cityNameMap = buildRegionDisplayMap();
 
-        if (rules.isEmpty()) {
+        if (!StringUtils.hasText(resolved.getDocumentOrganizationCode())) {
             return ArchiveRuleMatchResponse.builder()
                 .matched(false)
                 .companyProjectCode(company)
@@ -268,24 +284,11 @@ public class ArchiveFlowRuleServiceImpl implements ArchiveFlowRuleService {
                 .build();
         }
 
-        ArchiveFlowRule best = rules.stream()
-            .max(Comparator.comparingInt(rule -> scoreRuleForMatch(rule, customRule, archiveDestination)))
-            .orElse(null);
-
-        if (best == null) {
-            return ArchiveRuleMatchResponse.builder()
-                .matched(false)
-                .companyProjectCode(company)
-                .companyName(companyName)
-                .busiModuleCode(module)
-                .busiModuleName(busiModuleName)
-                .build();
-        }
-
-        String dest = StringUtils.hasText(archiveDestination) ? archiveDestination.trim() : best.getArchiveDestination();
+        String dest = StringUtils.hasText(archiveDestination) ? archiveDestination.trim() : resolved.getArchiveDestination();
         String destDisplayName = StringUtils.hasText(dest) ? cityNameMap.getOrDefault(dest, dest) : null;
-        String vis = best.getExternalDisplayFlag();
+        String vis = resolved.getExternalDisplayFlag();
         String visibilityLabel = "Y".equals(vis) ? "是" : "N".equals(vis) ? "否" : vis;
+        String docOrg = resolved.getDocumentOrganizationCode();
 
         return ArchiveRuleMatchResponse.builder()
             .matched(true)
@@ -293,32 +296,15 @@ public class ArchiveFlowRuleServiceImpl implements ArchiveFlowRuleService {
             .companyName(companyName)
             .busiModuleCode(module)
             .busiModuleName(busiModuleName)
-            .customRule(best.getCustomRule())
+            .customRule(resolved.getResolvedCustMappingCode())
             .archiveDestination(dest)
             .archiveDestinationName(destDisplayName)
-            .documentOrganizationCode(best.getDocumentOrganizationCode())
-            .documentOrganizationName(documentOrganizationNameMap.getOrDefault(best.getDocumentOrganizationCode(), best.getDocumentOrganizationCode()))
-            .retentionPeriodYears(best.getRetentionPeriodYears())
+            .documentOrganizationCode(docOrg)
+            .documentOrganizationName(documentOrganizationNameMap.getOrDefault(docOrg, docOrg))
+            .retentionPeriodYears(resolved.getRetentionPeriodYears())
             .visibleFlag(vis)
             .visibilityLabel(visibilityLabel)
             .build();
-    }
-
-    private int scoreRuleForMatch(ArchiveFlowRule rule, String customRule, String archiveDestination) {
-        int score = 0;
-        if (Objects.equals(trimToNull(rule.getCustomRule()), trimToNull(customRule))) {
-            score += 2;
-        }
-        if (Objects.equals(trimToNull(rule.getArchiveDestination()), trimToNull(archiveDestination))) {
-            score += 2;
-        }
-        if (!StringUtils.hasText(rule.getCustomRule())) {
-            score += 1;
-        }
-        if (!StringUtils.hasText(rule.getArchiveDestination())) {
-            score += 1;
-        }
-        return score;
     }
 
     private List<CompanyInfo> listActiveCompanies() {

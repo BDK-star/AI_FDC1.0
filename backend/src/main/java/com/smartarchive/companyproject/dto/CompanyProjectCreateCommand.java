@@ -21,8 +21,8 @@ public class CompanyProjectCreateCommand {
     @Size(max = 32, message = "国家编码长度不能超过32")
     private String countryCode;
 
-    @NotBlank(message = "管理区域不能为空")
-    @Size(max = 128, message = "管理区域长度不能超过128")
+    @NotBlank(message = "地区部不能为空")
+    @Size(max = 128, message = "地区部长度不能超过128")
     private String managementArea;
 
     @Size(max = 128, message = "公司标签长度不能超过128")

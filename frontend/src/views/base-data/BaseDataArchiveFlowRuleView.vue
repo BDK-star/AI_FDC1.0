@@ -67,11 +67,11 @@
                 <el-cascader
                   v-model="archiveDestinationPath"
                   :options="archiveDestinationOptions"
-                  :props="{ value: 'value', label: 'label', children: 'children', emitPath: true, checkStrictly: false }"
+                  :props="{ value: 'value', label: 'label', children: 'children', emitPath: true, checkStrictly: true }"
                   :disabled="isReadonly"
                   clearable
                   filterable
-                  placeholder="请选择国家/省份/城市"
+                  placeholder="请选择国家、省份或城市（任意一级）"
                   style="width: 100%"
                 />
               </el-form-item>
@@ -483,8 +483,8 @@ const removeItem = async (id: number) => {
   }
 }
 
-const buildArchiveDestinationPathForForm = (cityCode?: string) =>
-  buildArchiveDestinationPath(cityCode, provinceOptions.value, cityOptions.value)
+const buildArchiveDestinationPathForForm = (storedCode?: string) =>
+  buildArchiveDestinationPath(storedCode, countryOptions.value, provinceOptions.value, cityOptions.value)
 
 const formatTime = (value?: string) => value ? value.replace('T', ' ').slice(0, 19) : '-'
 

@@ -586,6 +586,18 @@ export interface DepartmentSignatory {
   lastUpdateDate?: string
 }
 
+export interface BarcodeModule {
+  barcodeId: number
+  barcodeCode: string
+  barcodeName: string
+  description?: string
+  enableFlag: 'Y' | 'N'
+  lastUpdatedBy?: number
+  lastUpdateDate?: string
+  /** 已关联该条码模块的叶子业务模块数量（列表接口） */
+  linkedBusinessModuleCount?: number
+}
+
 export interface BusinessModuleNode {
   id: number
   moduleCode: string
@@ -602,6 +614,11 @@ export interface BusinessModuleNode {
   description?: string
   remark?: string
   sortOrder: number
+  /** 业务表存储的条码模块编码 */
+  barcodeModuleCode?: string
+  barcodeId?: number
+  barcodeCode?: string
+  barcodeName?: string
   lastUpdatedBy?: number
   lastUpdateDate?: string
   children: BusinessModuleNode[]
@@ -799,7 +816,7 @@ export interface ArchiveRecordSummary {
   archiveStatus: string
   lifecycleStatus?: string
   custodyStatus?: string
-  /** 是否可见（attr1），详情归档信息区使用 */
+  /** 是否可见（库 visible_flag 映射为是/否），详情归档信息区使用 */
   documentVisibility?: string
   parseStatus: string
   vectorStatus: string

@@ -12,7 +12,7 @@
             <el-option label="文档批量导入查询" value="DOCUMENT" />
             <el-option label="应归档数据批量导入查询" value="PENDING_ARCHIVE_QUERY" />
             <el-option label="应归档数据批量导入" value="PENDING_ARCHIVE_IMPORT" />
-            <el-option label="应归档数据批量调整" value="PENDING_ARCHIVE_ADJUST" />
+            <el-option label="应归档数据批量更新" value="PENDING_ARCHIVE_ADJUST" />
             <el-option label="业务模块配置导入" value="DOCUMENT_TYPE" />
             <el-option label="文档组织配置导入" value="DOCUMENT_ORGANIZATION" />
             <el-option label="归档规则配置导入" value="ARCHIVE_FLOW_RULE" />
@@ -208,7 +208,7 @@ const importTaskTypeLabel = (row: WorkspaceIoJobSummary) => {
     return '应归档数据批量导入'
   }
   if (jt === 'IMPORT_PENDING_ARCHIVE_ADJUST') {
-    return '应归档数据批量调整'
+    return '应归档数据批量更新'
   }
   if (jt === 'IMPORT_QUERY') {
     if (dt === 'DOCUMENT') return '文档批量导入查询'

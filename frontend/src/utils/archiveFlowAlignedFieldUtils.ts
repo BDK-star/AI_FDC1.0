@@ -45,19 +45,38 @@ export function buildArchiveDestinationCascaderOptions(
   }))
 }
 
-/** 城市 regionCode → 级联路径 [国家, 省, 市] */
+/**
+ * 将已保存的 `arch_place_alpha2_code` 还原为级联路径。
+ * 支持任选一级：仅国家、仅省、市（叶子），与 `checkStrictly: true` 的级联器一致。
+ */
 export function buildArchiveDestinationPath(
-  cityCode: string | undefined,
+  storedCode: string | undefined,
+  countryOptions: CountryRegionItem[],
   provinceOptions: CountryRegionItem[],
   cityOptions: CountryRegionItem[]
 ): string[] {
-  if (!cityCode) return []
-  const city = cityOptions.find((item) => item.regionCode === cityCode)
-  if (!city) return [cityCode]
-  const provinceCode = city.parentRegionCode || ''
-  const province = provinceOptions.find((item) => item.regionCode === provinceCode)
-  const countryCode = province?.parentRegionCode || ''
-  return [countryCode, provinceCode, cityCode].filter(Boolean)
+  const code = String(storedCode || '').trim()
+  if (!code) return []
+
+  const city = cityOptions.find((item) => item.regionCode === code)
+  if (city) {
+    const provinceCode = city.parentRegionCode || ''
+    const province = provinceOptions.find((item) => item.regionCode === provinceCode)
+    const countryCode = province?.parentRegionCode || ''
+    return [countryCode, provinceCode, code].filter(Boolean)
+  }
+
+  const province = provinceOptions.find((item) => item.regionCode === code)
+  if (province) {
+    const countryCode = province.parentRegionCode || ''
+    return [countryCode, code].filter(Boolean)
+  }
+
+  if (countryOptions.some((c) => c.regionCode === code)) {
+    return [code]
+  }
+
+  return [code]
 }
 
 export function findBusinessModuleNameByCode(nodes: BusinessModuleNode[], code: string): string {

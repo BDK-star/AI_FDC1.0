@@ -10,6 +10,7 @@ import BaseDataCompanyProjectDictionaryView from '../views/base-data/BaseDataCom
 import BaseDataCompanyProjectListView from '../views/base-data/BaseDataCompanyProjectListView.vue'
 import BaseDataDocumentOrganizationView from '../views/base-data/BaseDataDocumentOrganizationView.vue'
 import BaseDataWarehouseView from '../views/base-data/BaseDataWarehouseView.vue'
+import BarcodeModuleConfigView from '../views/base-data/BarcodeModuleConfigView.vue'
 import BusinessModuleConfigView from '../views/base-data/BusinessModuleConfigView.vue'
 import CompanyInfoView from '../views/base-data/CompanyInfoView.vue'
 import DepartmentSignatoryView from '../views/base-data/DepartmentSignatoryView.vue'
@@ -84,6 +85,12 @@ const router = createRouter({
           name: 'base-data-business-modules',
           component: BusinessModuleConfigView,
           meta: { title: '业务模块配置', breadcrumb: ['配置中心', '业务模块配置'] }
+        },
+        {
+          path: 'base-data/barcode-modules',
+          name: 'base-data-barcode-modules',
+          component: BarcodeModuleConfigView,
+          meta: { title: '条码模块配置', breadcrumb: ['配置中心', '条码模块配置'] }
         },
         {
           path: 'base-data/company-infos',

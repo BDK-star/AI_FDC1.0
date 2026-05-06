@@ -41,8 +41,8 @@
             </el-form-item>
           </el-col>
           <el-col :md="12" :xs="24">
-            <el-form-item label="管理区域" prop="managementArea" required>
-              <el-input v-model.trim="form.managementArea" :disabled="readonly" placeholder="请输入管理区域" maxlength="128" show-word-limit />
+            <el-form-item label="地区部" prop="managementArea" required>
+              <el-input v-model.trim="form.managementArea" :disabled="readonly" placeholder="请输入地区部" maxlength="128" show-word-limit />
             </el-form-item>
           </el-col>
           <el-col :md="12" :xs="24">
@@ -183,8 +183,8 @@ const formRules: FormRules<CompanyProjectCreateCommand> = {
   ],
   countryCode: [{ required: true, message: '请选择国家', trigger: 'change' }],
   managementArea: [
-    { required: true, message: '请输入管理区域', trigger: 'blur' },
-    { max: 128, message: '管理区域长度不能超过128', trigger: 'blur' }
+    { required: true, message: '请输入地区部', trigger: 'blur' },
+    { max: 128, message: '地区部长度不能超过128', trigger: 'blur' }
   ],
   enabledFlag: [{ required: true, message: '请选择启用标识', trigger: 'change' }]
 }

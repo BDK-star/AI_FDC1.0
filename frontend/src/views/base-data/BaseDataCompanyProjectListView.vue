@@ -11,8 +11,8 @@
               <el-option v-for="item in countries" :key="item.countryCode" :label="item.countryName" :value="item.countryCode" />
             </el-select>
           </el-form-item>
-          <el-form-item label="管理区域">
-            <el-input v-model.trim="query.managementArea" placeholder="请输入管理区域" clearable />
+          <el-form-item label="地区部">
+            <el-input v-model.trim="query.managementArea" placeholder="请输入地区部" clearable />
           </el-form-item>
           <el-form-item label="启用标识">
             <el-select v-model="query.enabledFlag" placeholder="全部" clearable style="width: 120px">
@@ -35,7 +35,7 @@
         <el-table-column label="国家" min-width="120">
           <template #default="{ row }">{{ formatCountry(row.countryCode) }}</template>
         </el-table-column>
-        <el-table-column prop="managementArea" label="管理区域" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="managementArea" label="地区部" min-width="140" show-overflow-tooltip />
         <el-table-column label="启用标识" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabledFlag === 'Y' ? 'success' : 'info'">{{ row.enabledFlag === 'Y' ? '启用' : '停用' }}</el-tag>

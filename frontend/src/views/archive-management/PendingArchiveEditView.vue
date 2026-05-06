@@ -73,10 +73,10 @@
               v-model="form.archiveDestination"
               filterable
               clearable
-              placeholder="请选择归档地"
+              :placeholder="archiveDestinationPlaceholder"
               class="doc-edit-control"
             >
-              <el-option v-for="o in options.archiveDestinations" :key="o.code" :label="o.name" :value="o.code" />
+              <el-option v-for="o in archiveDestinationOptions" :key="o.code" :label="o.name" :value="o.code" />
             </el-select>
             <el-input v-else-if="row.edit === 'documentName'" v-model="form.documentName" clearable class="doc-edit-control" />
             <el-date-picker
@@ -262,7 +262,13 @@
                 class="audit-att-tag"
                 @close="auditAttachments.splice(i, 1)"
               >
-                {{ a.fileName || a.storageKey }}
+                <div class="audit-att-tag-inner" @click.stop>
+                  <span class="audit-att-tag-name">{{ a.fileName || a.storageKey }}</span>
+                  <div class="audit-att-tag-actions">
+                    <el-button link type="primary" size="small" @click.stop="previewAuditAttachment(a)">预览</el-button>
+                    <el-button link type="primary" size="small" @click.stop="downloadAuditAttachment(a)">下载</el-button>
+                  </div>
+                </div>
               </el-tag>
             </div>
           </div>
@@ -279,8 +285,14 @@ import type { UploadRequestOptions } from 'element-plus'
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchCompanyProjectCountries, fetchCompanyProjectDetail } from '../../api/modules/companyProject'
-import { fetchArchiveCreateOptions, getArchiveDetail, updatePendingDocument, uploadPendingAuditAttachment } from '../../api/modules/archiveManagement'
-import { fetchArchiveRuleMatch } from '../../api/modules/archiveFlow'
+import {
+  fetchArchiveCreateOptions,
+  getArchiveDetail,
+  updatePendingDocument,
+  uploadPendingAuditAttachment,
+  downloadPendingAuditAttachment
+} from '../../api/modules/archiveManagement'
+import { fetchArchiveFlowDestinationOptions, fetchArchiveRuleMatch } from '../../api/modules/archiveFlow'
 import type { ArchiveCreateOptions, ArchiveRecordSummary, BusinessModuleExtField, CompanyProjectDetail } from '../../types'
 import { getCountryLabel } from '../base-data/companyProjectShared'
 import { hardCodedExtLabelMap } from './extFieldDisplayConfig'
@@ -350,6 +362,17 @@ const options = reactive<ArchiveCreateOptions>({
   geoRepOffices: [],
   geoRegions: [],
   custodyStatuses: []
+})
+const archiveDestinationOptions = ref<Array<{ code: string; name: string }>>([])
+const archiveDestinationPlaceholder = computed(() => {
+  const hasContext = Boolean((detail.value?.companyProjectCode || '').trim() && (detail.value?.businessModuleTypeCode || '').trim())
+  if (!hasContext) {
+    return '请先确认公司和业务模块'
+  }
+  if (!archiveDestinationOptions.value.length) {
+    return '当前子公司+业务模块未配置可用归档地'
+  }
+  return '请选择归档地'
 })
 
 const form = reactive({
@@ -471,10 +494,35 @@ const syncDocumentOrgFromFlow = async () => {
   }
 }
 
+const syncArchiveDestinationOptionsByFlow = async () => {
+  if (!detail.value) return
+  const company = (detail.value.companyProjectCode || '').trim()
+  const module = (detail.value.businessModuleTypeCode || '').trim()
+  if (!company || !module) {
+    archiveDestinationOptions.value = []
+    form.archiveDestination = ''
+    return
+  }
+  try {
+    const list = await fetchArchiveFlowDestinationOptions({
+      companyProjectCode: company,
+      busiModuleCode: module
+    })
+    archiveDestinationOptions.value = list
+    const current = form.archiveDestination.trim()
+    if (current && !list.some((o) => o.code === current)) {
+      form.archiveDestination = ''
+    }
+  } catch {
+    archiveDestinationOptions.value = []
+    form.archiveDestination = ''
+  }
+}
+
 const applyDetailToForm = (d: ArchiveRecordSummary) => {
   form.businessCode = (d.businessCode || '').trim()
   form.endPeriod = d.endPeriod || ''
-  form.archiveDestination = matchOptionCode(options.archiveDestinations, d.archiveDestination)
+  form.archiveDestination = matchOptionCode(archiveDestinationOptions.value, d.archiveDestination)
   form.documentName = d.documentName || ''
   form.documentDate = toFormDateTime(d.documentDate)
   form.dutyPerson = d.dutyPerson || ''
@@ -673,7 +721,7 @@ const archiveInfoItems = computed(() => {
     { label: '文档组织', value: documentOrgFlowDisplay.value },
     { label: '是否可见', value: cell(vis) },
     { label: '条码模块', value: cell(barcode) },
-    { label: '保管状态', value: cell(d.custodyStatus || d.archiveStatus) }
+    { label: '保管状态', value: cell(d.custodyStatus) }
   ]
 })
 
@@ -704,6 +752,11 @@ const load = async () => {
     detail.value = record
     countryNameByCode.value = Object.fromEntries((countries || []).map((c) => [c.countryCode, c.countryName]))
     applyDetailToForm(record)
+    auditAttachments.value = record.auditAttachments?.length ? record.auditAttachments : []
+    await syncArchiveDestinationOptionsByFlow()
+    if (!archiveDestinationOptions.value.some((o) => o.code === form.archiveDestination.trim())) {
+      form.archiveDestination = ''
+    }
     await initExtForm(record)
     await syncCompanyReadonlyExtFields(record.companyProjectCode || '')
     await syncDocumentOrgFromFlow()
@@ -757,6 +810,47 @@ const handleAuditUpload = async (opt: UploadRequestOptions) => {
   } catch (e: unknown) {
     opt.onError?.(e as any)
     ElMessage.error(e instanceof Error ? e.message : '上传失败')
+  }
+}
+
+const saveBlob = (blob: Blob, fileName: string) => {
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  a.click()
+  window.URL.revokeObjectURL(url)
+}
+
+const downloadAuditAttachment = async (att: { fileId?: number; storageKey?: string; fileName?: string }) => {
+  const fid = att.fileId
+  const sk = att.storageKey?.trim()
+  if ((fid == null || !Number.isFinite(Number(fid)) || Number(fid) <= 0) && !sk) {
+    ElMessage.warning('无效附件')
+    return
+  }
+  try {
+    const blob = await downloadPendingAuditAttachment({ fileId: fid, storageKey: sk })
+    saveBlob(blob, att.fileName?.trim() || 'attachment')
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+
+const previewAuditAttachment = async (att: { fileId?: number; storageKey?: string; fileName?: string }) => {
+  const fid = att.fileId
+  const sk = att.storageKey?.trim()
+  if ((fid == null || !Number.isFinite(Number(fid)) || Number(fid) <= 0) && !sk) {
+    ElMessage.warning('无效附件')
+    return
+  }
+  try {
+    const blob = await downloadPendingAuditAttachment({ fileId: fid, storageKey: sk })
+    const url = window.URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+  } catch {
+    ElMessage.error('预览失败')
   }
 }
 
@@ -826,6 +920,14 @@ const save = async () => {
   }
   if (!form.documentDate) {
     ElMessage.warning('请填写文档生成日期')
+    return
+  }
+  if (!form.archiveDestination.trim()) {
+    ElMessage.warning('请选择归档地')
+    return
+  }
+  if (!archiveDestinationOptions.value.some((o) => o.code === form.archiveDestination.trim())) {
+    ElMessage.warning('归档地必须来自当前子公司与业务模块匹配的归档流向规则')
     return
   }
   saving.value = true
@@ -1009,6 +1111,25 @@ watch(
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+.audit-att-tag-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audit-att-tag-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-att-tag-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 :deep(.doc-edit-control.el-input),
 :deep(.doc-edit-control.el-select),

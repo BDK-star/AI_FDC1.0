@@ -56,7 +56,7 @@
               class="doc-edit-control"
             >
               <el-option
-                v-for="c in companySelectOptions"
+                v-for="c in options.companyProjects"
                 :key="c.code"
                 :label="`${c.code} · ${c.name}`"
                 :value="c.code"
@@ -97,7 +97,7 @@
               v-model="form.archiveDestination"
               filterable
               clearable
-              placeholder="请选择归档地"
+              :placeholder="archiveDestinationPlaceholder"
               class="doc-edit-control"
             >
               <el-option v-for="o in archiveDestinationSelectOptions" :key="o.code" :label="o.name" :value="o.code" />
@@ -132,13 +132,15 @@
               class="doc-edit-control"
               @blur="onDutyPersonBlur"
             />
-            <el-input
-              v-else-if="spec.key === 'dutyDepartment'"
-              v-model="form.dutyDepartment"
-              clearable
-              placeholder="文档责任部门"
-              class="doc-edit-control"
-            />
+            <div v-else-if="spec.key === 'dutyDepartment'" class="doc-info-item__stack">
+              <el-input
+                v-model="form.dutyDepartment"
+                clearable
+                placeholder="失焦加载责任人档案后自动带出，与批量模板一致可不手填"
+                class="doc-edit-control"
+              />
+              <div class="doc-flow-hint">责任部门与责任人档案关联；若需覆盖请填写数字部门 ID。</div>
+            </div>
             <el-select
               v-else-if="spec.key === 'carrierTypeCode'"
               v-model="form.carrierTypeCode"
@@ -194,7 +196,7 @@
       <div v-show="sectionOpen.ext" class="doc-info-grid">
         <div class="doc-info-item doc-info-item--full">
           <div class="doc-info-item__value doc-muted-hint">
-            国家、地区部、代表处、公司标签由公司信息自动带出，不可编辑。选择业务模块后，将展示该模块在「业务模块配置」中维护的、应用功能含「应收」的档案扩展字段（BASIC）。
+            与批量导入 CSV 规则一致：下列为须手填的「应归档」扩展字段（由文档类型与业务模块配置决定）。国家、代表处、地区部、公司标签由公司信息带出，不可编辑。批量模板后半段列与业务模块「应归档数据」扩展并集一致，不再使用硬编码字段黑名单。
           </div>
         </div>
         <div v-for="row in extCreateRows" :key="row.key" class="doc-info-item">
@@ -278,19 +280,21 @@
               class="doc-edit-control"
               :placeholder="documentOrganizationPlaceholder"
             />
-            <div class="doc-flow-hint">由归档流向规则决定（公司、文档类型、业务模块、归档地匹配后自动带出）</div>
+            <div class="doc-flow-hint">由归档流向规则决定（公司、文档类型、业务模块、归档地匹配后自动带出）；批量模板不要求填写。</div>
           </div>
         </div>
         <div class="doc-info-item">
           <div class="doc-info-item__label">是否可见</div>
           <div class="doc-info-item__value">
             <el-input v-model="extForm.visibility" clearable placeholder="默认：是" class="doc-edit-control" />
+            <div class="doc-flow-hint">由归档流向规则匹配后带出（批量模板不含本列）。</div>
           </div>
         </div>
         <div class="doc-info-item">
           <div class="doc-info-item__label">条码模块</div>
           <div class="doc-info-item__value">
-            <el-input v-model="extForm.barcodeModule" clearable placeholder="请输入" class="doc-edit-control" />
+            <el-input v-model="extForm.barcodeModule" clearable placeholder="可选；批量模板不含本列" class="doc-edit-control" />
+            <div class="doc-flow-hint">与业务模块关联展示；单行创建如需写入归档条码可在此填写。</div>
           </div>
         </div>
         <div class="doc-info-item">
@@ -346,7 +350,13 @@
                 class="audit-att-tag"
                 @close="auditAttachments.splice(i, 1)"
               >
-                {{ a.fileName || a.storageKey }}
+                <div class="audit-att-tag-inner" @click.stop>
+                  <span class="audit-att-tag-name">{{ a.fileName || a.storageKey }}</span>
+                  <div class="audit-att-tag-actions">
+                    <el-button link type="primary" size="small" @click.stop="previewAuditAttachment(a)">预览</el-button>
+                    <el-button link type="primary" size="small" @click.stop="downloadAuditAttachment(a)">下载</el-button>
+                  </div>
+                </div>
               </el-tag>
             </div>
           </div>
@@ -367,9 +377,10 @@ import {
   fetchArchiveCreateOptions,
   getArchiveDetail,
   updatePendingDocument,
-  uploadPendingAuditAttachment
+  uploadPendingAuditAttachment,
+  downloadPendingAuditAttachment
 } from '../../api/modules/archiveManagement'
-import { fetchArchiveRuleMatch } from '../../api/modules/archiveFlow'
+import { fetchArchiveFlowDestinationOptions, fetchArchiveRuleMatch } from '../../api/modules/archiveFlow'
 import {
   buildModuleQueryTree,
   fetchBusinessModuleTree,
@@ -445,7 +456,6 @@ const resumeArchiveId = ref<number | null>(null)
 const loadedRetentionYears = ref(10)
 const operationRemark = ref('')
 const auditAttachments = ref<Array<{ fileId: number; fileName?: string; storageKey?: string; fileSize?: number }>>([])
-const companySelectOptions = ref<Array<{ code: string; name: string }>>([])
 const businessModuleSourceTree = ref<BusinessModuleNode[]>([])
 const businessModuleTreeOptions = ref<ModuleQueryTreeNode[]>([])
 const countryNameByCode = ref<Record<string, string>>({})
@@ -478,6 +488,7 @@ const options = reactive<ArchiveCreateOptions>({
   geoRegions: [],
   custodyStatuses: []
 })
+const archiveDestinationOptions = ref<LabelValueOption[]>([])
 
 const form = reactive({
   documentTypeCode: (typeof route.query.documentTypeCode === 'string' ? route.query.documentTypeCode : '') || '',
@@ -513,34 +524,43 @@ const headlineTitle = computed(() => {
   return '新建应归档数据'
 })
 
-/** 规则匹配返回的归档地可能在标准下拉里不存在，此处存服务侧描述供选项展示 */
-const archiveDestinationLabelFromService = ref('')
-
-/** 归档地下拉：与 options 合并，当前值仅含编码时补上「描述（编码）」 */
-const archiveDestinationSelectOptions = computed(() => {
-  const base = options.archiveDestinations
-  const code = form.archiveDestination.trim()
-  if (!code) return base
-  if (base.some((o) => o.code === code)) return base
-  const text = archiveDestinationLabelFromService.value.trim()
-  const label = text ? `${text}（${code}）` : code
-  return [...base, { code, name: label }]
+const archiveDestinationSelectOptions = computed(() => archiveDestinationOptions.value)
+const archiveDestinationPlaceholder = computed(() => {
+  const company = form.companyProjectCode.trim()
+  const module = form.archiveTypeCode.trim()
+  if (!company || !module) {
+    return '请先选择公司和业务模块'
+  }
+  if (!archiveDestinationOptions.value.length) {
+    return '当前子公司+业务模块未配置可用归档地'
+  }
+  return '请选择归档地'
 })
 
-watch(
-  [() => form.archiveDestination, () => options.archiveDestinations],
-  () => {
-    const code = form.archiveDestination.trim()
-    if (!code) {
-      archiveDestinationLabelFromService.value = ''
-      return
+const syncArchiveDestinationOptionsByFlow = async () => {
+  const company = form.companyProjectCode.trim()
+  const module = form.archiveTypeCode.trim()
+  if (!company || !module) {
+    archiveDestinationOptions.value = []
+    form.archiveDestination = ''
+    form.documentOrganizationCode = ''
+    return
+  }
+  try {
+    const list = await fetchArchiveFlowDestinationOptions({
+      companyProjectCode: company,
+      busiModuleCode: module
+    })
+    archiveDestinationOptions.value = list
+    const current = form.archiveDestination.trim()
+    if (current && !list.some((o) => o.code === current)) {
+      form.archiveDestination = ''
     }
-    if (options.archiveDestinations.some((o) => o.code === code)) {
-      archiveDestinationLabelFromService.value = ''
-    }
-  },
-  { deep: true }
-)
+  } catch {
+    archiveDestinationOptions.value = []
+    form.archiveDestination = ''
+  }
+}
 
 /** 文档组织编码由归档流向解析，展示名称+编码 */
 const documentOrganizationDisplay = computed(() => {
@@ -704,19 +724,14 @@ const applyArchiveFlowDefaults = async () => {
       archiveDestination: form.archiveDestination.trim() || undefined
     })
     if (!m?.matched) {
-      form.archiveDestination = ''
       form.documentOrganizationCode = ''
-      archiveDestinationLabelFromService.value = ''
       return
     }
     const dest = (m.archiveDestination || '').trim()
     if (dest) {
-      const resolved = matchOptionCode(options.archiveDestinations, dest) || dest
-      form.archiveDestination = resolved
-      const inStdList = options.archiveDestinations.some((o) => o.code === resolved)
-      archiveDestinationLabelFromService.value = inStdList ? '' : (m.archiveDestinationName || '').trim()
+      form.archiveDestination = matchOptionCode(archiveDestinationOptions.value, dest)
     } else {
-      archiveDestinationLabelFromService.value = ''
+      form.archiveDestination = ''
     }
     const org = (m.documentOrganizationCode || '').trim()
     if (org) {
@@ -837,6 +852,7 @@ watch(
       }
     }
     if (bootstrappingDraft.value) return
+    await syncArchiveDestinationOptionsByFlow()
     void syncReceivableModuleExtFields()
   }
 )
@@ -851,6 +867,7 @@ watch(
       return
     }
     await applySelectedCompanyExtFields()
+    await syncArchiveDestinationOptionsByFlow()
   }
 )
 
@@ -890,17 +907,18 @@ const loadDraftIntoForm = async (docId: number) => {
       return
     }
     resumeArchiveId.value = docId
+    auditAttachments.value = record.auditAttachments?.length ? record.auditAttachments : []
     loadedRetentionYears.value =
       record.retentionPeriodYears != null && record.retentionPeriodYears > 0 ? record.retentionPeriodYears : 10
     form.documentTypeCode = matchOptionCode(options.documentTypes, record.documentTypeCode)
     form.businessCode = (record.businessCode || '').trim()
-    form.companyProjectCode = matchOptionCode(companySelectOptions.value, record.companyProjectCode)
+    form.companyProjectCode = matchOptionCode(options.companyProjects, record.companyProjectCode)
     const flatMods = flattenModuleQueryNodes(buildModuleQueryTree(businessModuleSourceTree.value))
     form.archiveTypeCode =
       matchOptionCode(flatMods, record.businessModuleTypeCode) || (record.businessModuleTypeCode || '').trim()
     form.beginPeriod = record.beginPeriod || ''
     form.endPeriod = record.endPeriod || ''
-    form.archiveDestination = matchOptionCode(options.archiveDestinations, record.archiveDestination)
+    form.archiveDestination = matchOptionCode(archiveDestinationOptions.value, record.archiveDestination)
     form.originPlace = (record.originPlace || '').trim()
     form.documentName = (record.documentName || '').trim()
     form.documentDate = toFormDateTime(record.documentDate)
@@ -911,7 +929,7 @@ const loadDraftIntoForm = async (docId: number) => {
     form.securityLevelCode = matchOptionCode(options.securityLevels, record.securityLevelCode || record.securityLevelName)
     form.remark = (record.remark || '').trim()
     form.documentOrganizationCode = (record.documentOrganizationCode || '').trim()
-    form.custodyStatus = matchOptionCode(options.custodyStatuses, record.custodyStatus) || 'UNARCHIVED'
+    form.custodyStatus = matchOptionCode(options.custodyStatuses, record.custodyStatus) || 'IN_STORAGE'
     Object.keys(extForm).forEach((k) => delete extForm[k])
     const ext = record.extValues || {}
     for (const [k, v] of Object.entries(ext)) {
@@ -935,17 +953,16 @@ const loadDraftIntoForm = async (docId: number) => {
 onMounted(async () => {
   loading.value = true
   try {
-    const [data, countries, companyInfos, moduleTree] = await Promise.all([
+    const [data, countries, moduleTree] = await Promise.all([
       fetchArchiveCreateOptions(),
       fetchCompanyProjectCountries().catch(() => [] as { countryCode: string; countryName: string }[]),
-      fetchCompanyInfos({ enabledFlag: 'Y' }).catch(() => [] as CompanyInfo[]),
       fetchBusinessModuleTree().catch((): BusinessModuleNode[] => [])
     ])
     Object.assign(options, data)
+    archiveDestinationOptions.value = []
     countryNameByCode.value = Object.fromEntries(
       (countries || []).map((c) => [c.countryCode, c.countryName])
     )
-    companySelectOptions.value = companyInfos.map((c) => ({ code: c.companyCode, name: c.companyName }))
     businessModuleSourceTree.value = moduleTree
     syncBusinessModuleOptionsByDocumentType(form.documentTypeCode)
     const rawResume =
@@ -996,6 +1013,48 @@ const handleAuditUpload = async (opt: UploadRequestOptions) => {
   }
 }
 
+const saveBlob = (blob: Blob, fileName: string) => {
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  a.click()
+  window.URL.revokeObjectURL(url)
+}
+
+const downloadAuditAttachment = async (att: { fileId?: number; storageKey?: string; fileName?: string }) => {
+  const fid = att.fileId
+  const sk = att.storageKey?.trim()
+  if ((fid == null || !Number.isFinite(Number(fid)) || Number(fid) <= 0) && !sk) {
+    ElMessage.warning('无效附件')
+    return
+  }
+  try {
+    const blob = await downloadPendingAuditAttachment({ fileId: fid, storageKey: sk })
+    saveBlob(blob, att.fileName?.trim() || 'attachment')
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+
+const previewAuditAttachment = async (att: { fileId?: number; storageKey?: string; fileName?: string }) => {
+  const fid = att.fileId
+  const sk = att.storageKey?.trim()
+  if ((fid == null || !Number.isFinite(Number(fid)) || Number(fid) <= 0) && !sk) {
+    ElMessage.warning('无效附件')
+    return
+  }
+  try {
+    const blob = await downloadPendingAuditAttachment({ fileId: fid, storageKey: sk })
+    const url = window.URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    // 由浏览器接管显示后再释放，避免过早回收导致空白
+    setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+  } catch {
+    ElMessage.error('预览失败')
+  }
+}
+
 const resolveRetentionYears = async (): Promise<number> => {
   let retention = 10
   const company = form.companyProjectCode.trim()
@@ -1020,13 +1079,19 @@ const resolveRetentionYears = async (): Promise<number> => {
 const saveDraft = async () => {
   submitting.value = true
   try {
+    const companyCode = matchOptionCode(options.companyProjects, form.companyProjectCode)
+    if (!companyCode || !options.companyProjects.some((o) => o.code === companyCode)) {
+      ElMessage.warning('请选择有效的子公司（仅支持当前下拉中的公司）')
+      return
+    }
+    form.companyProjectCode = companyCode
     const retention =
       resumeArchiveId.value != null ? loadedRetentionYears.value : await resolveRetentionYears()
     const extVals = collectExtValues()
     const payload = {
       operatorUserId: CURRENT_OPERATOR_USER_ID,
       documentTypeCode: form.documentTypeCode.trim(),
-      companyProjectCode: form.companyProjectCode.trim(),
+      companyProjectCode: companyCode,
       archiveTypeCode: form.archiveTypeCode.trim(),
       businessCode: form.businessCode.trim() || undefined,
       beginPeriod: form.beginPeriod || '',
@@ -1043,7 +1108,7 @@ const saveDraft = async () => {
       remark: form.remark.trim() || undefined,
       documentOrganizationCode: form.documentOrganizationCode.trim() || 'DEFAULT',
       retentionPeriodYears: retention,
-      custodyStatus: (form.custodyStatus || '').trim() || 'UNARCHIVED',
+      custodyStatus: (form.custodyStatus || '').trim() || 'IN_STORAGE',
       submitMode: 'DRAFT' as const,
       operationRemark: operationRemark.value.trim() || undefined,
       auditAttachments: auditAttachments.value.length ? auditAttachments.value : undefined,
@@ -1082,6 +1147,12 @@ const submit = async () => {
     ElMessage.warning('请选择公司')
     return
   }
+  const companyCode = matchOptionCode(options.companyProjects, form.companyProjectCode)
+  if (!companyCode || !options.companyProjects.some((o) => o.code === companyCode)) {
+    ElMessage.warning('请选择有效的子公司（仅支持当前下拉中的公司）')
+    return
+  }
+  form.companyProjectCode = companyCode
   if (!form.businessCode.trim()) {
     ElMessage.warning('请填写文档业务编码')
     return
@@ -1102,6 +1173,14 @@ const submit = async () => {
     ElMessage.warning('请填写文档生成日期')
     return
   }
+  if (!form.archiveDestination.trim()) {
+    ElMessage.warning('请选择归档地')
+    return
+  }
+  if (!archiveDestinationOptions.value.some((o) => o.code === form.archiveDestination.trim())) {
+    ElMessage.warning('归档地必须来自当前子公司与业务模块匹配的归档流向规则')
+    return
+  }
   submitting.value = true
   try {
     const retention =
@@ -1110,7 +1189,7 @@ const submit = async () => {
     const payload = {
       operatorUserId: CURRENT_OPERATOR_USER_ID,
       documentTypeCode: form.documentTypeCode.trim(),
-      companyProjectCode: form.companyProjectCode.trim(),
+      companyProjectCode: companyCode,
       archiveTypeCode: form.archiveTypeCode.trim(),
       businessCode: form.businessCode.trim() || undefined,
       beginPeriod: form.beginPeriod,
@@ -1127,7 +1206,7 @@ const submit = async () => {
       remark: form.remark.trim() || undefined,
       documentOrganizationCode: form.documentOrganizationCode.trim(),
       retentionPeriodYears: retention,
-      custodyStatus: (form.custodyStatus || '').trim() || 'UNARCHIVED',
+      custodyStatus: (form.custodyStatus || '').trim() || 'IN_STORAGE',
       submitMode: 'SUBMIT' as const,
       operationRemark: operationRemark.value.trim() || undefined,
       auditAttachments: auditAttachments.value.length ? auditAttachments.value : undefined,
@@ -1237,6 +1316,25 @@ const cancel = () => {
   gap: 8px;
   margin-top: 8px;
 }
+
+.audit-att-tag-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audit-att-tag-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-att-tag-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .doc-info-item__label {
   width: 120px;
   color: #64748b;
@@ -1273,6 +1371,10 @@ const cancel = () => {
   font-size: 12px;
   color: #64748b;
   line-height: 1.4;
+}
+.doc-info-item__stack {
+  width: 100%;
+  min-width: 0;
 }
 :deep(.doc-edit-control.el-input),
 :deep(.doc-edit-control.el-select),

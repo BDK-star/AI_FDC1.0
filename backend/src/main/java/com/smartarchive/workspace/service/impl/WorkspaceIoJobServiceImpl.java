@@ -20,10 +20,12 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
@@ -47,6 +49,9 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
 
     @Override
     public WorkspaceIoJobSummaryResponse create(WorkspaceIoJobCreateCommand command, long operatorUserId) {
+        if (command == null) {
+            throw new BusinessException("command is required");
+        }
         if (operatorUserId <= 0) {
             throw new BusinessException("operatorUserId is invalid");
         }
@@ -102,8 +107,13 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
 
         if ("EXPORT_QUERY".equals(jobType)) {
             String ext = exportArtifactExtension(entity.getExportFileFormat());
-            entity.setJobName("workspace-export-" + entity.getJobId() + "." + ext);
-            workspaceIoJobMapper.updateById(entity);
+            Long jobId = entity.getJobId();
+            if (jobId != null && jobId > 0) {
+                entity.setJobName("workspace-export-" + jobId + "." + ext);
+                workspaceIoJobMapper.updateById(entity);
+            } else {
+                log.warn("WorkspaceIoJob insert did not populate jobId; skip export file rename (jobType={})", jobType);
+            }
         }
 
         return toSummary(entity);
@@ -241,7 +251,8 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
                 return "COMPLETED";
             }
         }
-        if ("IMPORT_PENDING_ARCHIVE".equals(entity.getJobType()) && StringUtils.hasText(entity.getResultArtifactBase64())) {
+        if (("IMPORT_PENDING_ARCHIVE".equals(entity.getJobType()) || "IMPORT_PENDING_ARCHIVE_ADJUST".equals(entity.getJobType()))
+            && StringUtils.hasText(entity.getResultArtifactBase64())) {
             LocalDateTime exp = entity.getArtifactExpiresAt();
             if (exp != null && exp.isBefore(now)) {
                 return "EXPIRED";
@@ -271,7 +282,8 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
         }
 
         boolean resultArtifactDownloadable = false;
-        if ("IMPORT_PENDING_ARCHIVE".equals(entity.getJobType()) && StringUtils.hasText(entity.getResultArtifactBase64())) {
+        if (("IMPORT_PENDING_ARCHIVE".equals(entity.getJobType()) || "IMPORT_PENDING_ARCHIVE_ADJUST".equals(entity.getJobType()))
+            && StringUtils.hasText(entity.getResultArtifactBase64())) {
             LocalDateTime exp = entity.getArtifactExpiresAt();
             if (exp != null && !exp.isBefore(now) && !"EXPIRED".equalsIgnoreCase(displayStatus)) {
                 resultArtifactDownloadable = true;
@@ -394,7 +406,9 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
             fileName = "export-" + jobId + ".txt";
             contentType = "text/plain; charset=utf-8";
         } else {
-            body = text.getBytes(StandardCharsets.UTF_8);
+            // CSV：加 BOM，与同步导出一致，避免 Excel 打开 UTF-8 时中文或列错位被误认为「无内容」
+            String withBom = "\uFEFF" + text;
+            body = withBom.getBytes(StandardCharsets.UTF_8);
             fileName = "export-" + jobId + ".csv";
             contentType = "text/csv; charset=utf-8";
         }
@@ -419,8 +433,8 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
             recordImportResultDownloadAudit(jobId, operatorUserId, fileName);
             return new WorkspaceExportArtifactResult(body, fileName, "text/csv; charset=utf-8");
         }
-        if (!"IMPORT_PENDING_ARCHIVE".equals(job.getJobType())) {
-            throw new BusinessException("不是应归档批量导入任务");
+        if (!"IMPORT_PENDING_ARCHIVE".equals(job.getJobType()) && !"IMPORT_PENDING_ARCHIVE_ADJUST".equals(job.getJobType())) {
+            throw new BusinessException("不是应归档批量导入/批量更新任务");
         }
         if (!StringUtils.hasText(job.getResultArtifactBase64())) {
             throw new BusinessException("该任务暂无可下载的结果文件");
@@ -471,7 +485,7 @@ public class WorkspaceIoJobServiceImpl implements WorkspaceIoJobService {
                    ) as duty_person,
                    cast(d.doc_resp_dept_id as varchar) as duty_department,
                    d.carrier_type as carrier_type_code,
-                   coalesce(d.attr1, '是') as document_visibility,
+                   case when coalesce(d.visible_flag, '1') = '0' then '否' else '是' end as document_visibility,
                    d.source_system,
                    d.security_level,
                    d.description as remark,

@@ -47,6 +47,18 @@ public class GlobalExceptionHandler {
         return ApiResponse.failure(4000, detail);
     }
 
+    /**
+     * NPE 的 getMessage() 多为 null，通用 handler 只会回传类名「NullPointerException」，无法定位。
+     * 单独处理并带上首帧栈，便于对照修复。
+     */
+    @ExceptionHandler(NullPointerException.class)
+    public ApiResponse<Void> handleNullPointer(NullPointerException ex) {
+        log.error("NullPointerException", ex);
+        StackTraceElement[] st = ex.getStackTrace();
+        String where = (st != null && st.length > 0) ? st[0].toString() : "unknown";
+        return ApiResponse.failure(5000, "空指针 @ " + where);
+    }
+
     @ExceptionHandler(Exception.class)
     public ApiResponse<Void> handleException(Exception ex) {
         log.error("Unhandled exception", ex);

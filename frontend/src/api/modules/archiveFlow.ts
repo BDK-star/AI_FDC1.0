@@ -92,6 +92,15 @@ export function fetchArchiveFlowCityOptions() {
   return apiRequest<ArchiveFlowRuleOption[]>(http.get('/api/base-data/archive-flow-rules/options/cities'))
 }
 
+export function fetchArchiveFlowDestinationOptions(params: {
+  companyProjectCode: string
+  busiModuleCode: string
+}) {
+  return apiRequest<ArchiveFlowRuleOption[]>(
+    http.get('/api/base-data/archive-flow-rules/options/archive-destinations', { params })
+  )
+}
+
 /** 归档规则匹配：公司 + 业务模块必填 */
 export function fetchArchiveRuleMatch(params: ArchiveRuleMatchParams) {
   return apiRequest<ArchiveRuleMatchResult>(

@@ -34,10 +34,15 @@ import com.smartarchive.archivemanage.dto.StorageOptionsResponse;
 import com.smartarchive.archivemanage.dto.StorageQueryCommand;
 import com.smartarchive.archivemanage.dto.StorageQueryResponse;
 import com.smartarchive.archivemanage.service.ArchiveManagementService;
+import com.smartarchive.archivemanage.service.PendingArchiveBatchImportService;
 import com.smartarchive.common.api.ApiResponse;
+import com.smartarchive.common.exception.BusinessException;
 import com.smartarchive.workspace.dto.WorkspaceIoJobSummaryResponse;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -56,12 +61,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.util.StringUtils;
 
 @RestController
 @RequestMapping("/api/archive-management")
 @RequiredArgsConstructor
 public class ArchiveManagementController {
     private final ArchiveManagementService archiveManagementService;
+    private final PendingArchiveBatchImportService pendingArchiveBatchImportService;
+    private final ObjectMapper objectMapper;
 
     @GetMapping("/create/options")
     public ApiResponse<ArchiveCreateOptionsResponse> loadCreateOptions() {
@@ -147,6 +155,23 @@ public class ArchiveManagementController {
         return ApiResponse.success(null);
     }
 
+    /**
+     * 应归档批量更新（multipart）。放在本控制器与 {@code /pending-documents/audit-attachments} 等同级，避免部分环境下子路径 POST 未命中。
+     */
+    @PostMapping("/pending-documents/batch-import-adjust")
+    public ApiResponse<WorkspaceIoJobSummaryResponse> batchAdjustPendingDocuments(
+        @RequestParam("file") MultipartFile file,
+        @RequestParam String documentTypeCode,
+        @RequestParam(required = false) String operationRemark,
+        @RequestParam(required = false) String auditAttachmentsJson,
+        @RequestHeader(value = "X-User-Id", required = false) Long userId
+    ) {
+        long uid = userId != null && userId > 0 ? userId : 1L;
+        List<PendingAuditAttachmentRef> auditRefs = parsePendingAuditAttachmentRefs(auditAttachmentsJson);
+        return ApiResponse.success(
+            pendingArchiveBatchImportService.submitAdjust(file, documentTypeCode, operationRemark, auditRefs, uid));
+    }
+
     @PostMapping("/pending-documents/{docId}/duplicate")
     public ApiResponse<ArchiveSummaryResponse> duplicatePendingDocument(
         @PathVariable Long docId,
@@ -206,13 +231,46 @@ public class ArchiveManagementController {
             .body(d.resource());
     }
 
+    /**
+     * 批量导出（重做）：直接返回 CSV 文件，不经过「我的导出」异步任务，避免任务落库链路异常影响使用。
+     */
+    @PostMapping(value = "/pending-documents/export-csv", produces = "text/csv;charset=UTF-8")
+    public ResponseEntity<byte[]> downloadPendingDocumentsCsv(@RequestBody PendingDocumentExportCommand command) {
+        if (command == null) {
+            throw new BusinessException("请求体不能为空");
+        }
+        List<Long> docIds = command.resolveDocIds();
+        if (docIds.isEmpty()) {
+            throw new BusinessException("docIds is required");
+        }
+        String csv = archiveManagementService.exportPendingDocumentsCsvContent(docIds, command.getExportScope());
+        byte[] body = ("\uFEFF" + (csv == null ? "" : csv)).getBytes(StandardCharsets.UTF_8);
+        String scope = command.getExportScope() != null ? command.getExportScope().trim() : "";
+        String base = "PENDING_ARCHIVE".equalsIgnoreCase(scope) ? "pending-archive-export" : "document-query-export";
+        String filename = base + "-" + LocalDate.now() + ".csv";
+        ContentDisposition disposition = ContentDisposition.attachment()
+            .filename(filename, StandardCharsets.UTF_8)
+            .build();
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+            .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+            .body(body);
+    }
+
     @PostMapping("/pending-documents/export-jobs")
     public ApiResponse<WorkspaceIoJobSummaryResponse> createPendingDocumentsExportJob(
         @RequestBody PendingDocumentExportCommand command,
         @RequestHeader(value = "X-User-Id", required = false) Long userId
     ) {
+        if (command == null) {
+            throw new BusinessException("请求体不能为空");
+        }
         long uid = userId != null && userId > 0 ? userId : 1L;
-        return ApiResponse.success(archiveManagementService.createPendingDocumentsExportJob(command.getDocIds(), command.getExportFileFormat(), command.getExportScope(), uid));
+        List<Long> docIds = command.resolveDocIds();
+        if (docIds.isEmpty()) {
+            throw new BusinessException("docIds is required");
+        }
+        return ApiResponse.success(archiveManagementService.createPendingDocumentsExportJob(docIds, command.getExportFileFormat(), command.getExportScope(), uid));
     }
 
     @PostMapping("/archives/import-query-jobs")
@@ -283,5 +341,17 @@ public class ArchiveManagementController {
     @GetMapping("/storage/ledger/{ledgerId}")
     public ApiResponse<StorageLedgerResponse> getStorageLedger(@PathVariable Long ledgerId) {
         return ApiResponse.success(archiveManagementService.getStorageLedger(ledgerId));
+    }
+
+    private List<PendingAuditAttachmentRef> parsePendingAuditAttachmentRefs(String json) {
+        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            List<PendingAuditAttachmentRef> list = objectMapper.readValue(json.trim(), new TypeReference<>() { });
+            return list != null ? list : List.of();
+        } catch (Exception e) {
+            throw new BusinessException("补充说明附件参数格式无效: " + e.getMessage());
+        }
     }
 }

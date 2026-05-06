@@ -57,6 +57,12 @@ public class ArchiveFlowRuleController {
         return ApiResponse.success(archiveFlowRuleService.listCityOptions());
     }
 
+    @GetMapping("/options/archive-destinations")
+    public ApiResponse<List<ArchiveFlowRuleOptionResponse>> listMatchedArchiveDestinations(@RequestParam String companyProjectCode,
+                                                                                            @RequestParam String busiModuleCode) {
+        return ApiResponse.success(archiveFlowRuleService.listMatchedArchiveDestinationOptions(companyProjectCode, busiModuleCode));
+    }
+
     @GetMapping("/permissions/preview")
     public ApiResponse<ArchiveFlowRulePermissionPreviewResponse> permissionPreview() {
         return ApiResponse.success(archiveFlowRuleService.getPermissionPreview());

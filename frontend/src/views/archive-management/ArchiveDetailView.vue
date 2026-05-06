@@ -198,6 +198,9 @@ import {
   fetchReceivableBasicExtFields
 } from './pendingArchiveExtShared'
 
+/** 临时：文档详情「扩展信息」不展示公司标签；恢复时设为 false */
+const HIDE_COMPANY_TAG_IN_ARCHIVE_DETAIL_EXT = true
+
 interface OperationLogRow {
   operator: string
   operationType: string
@@ -373,7 +376,9 @@ const extInfoItems = computed(() => {
     return s === '' ? '-' : s
   }
   const items: { label: string; value: string }[] = []
+  const hideCompanyTag = HIDE_COMPANY_TAG_IN_ARCHIVE_DETAIL_EXT
   for (const key of COMPANY_SYNC_EXT_KEYS) {
+    if (hideCompanyTag && key === 'companyTag') continue
     const value = key === 'country' ? formatCountryExtValue(ext[key]) : formatExtCell(ext[key])
     items.push({
       label: hardCodedExtLabelMap[key] || key,
@@ -383,6 +388,7 @@ const extInfoItems = computed(() => {
   for (const f of receivableBusinessExtFields.value) {
     const key = extKeyForBusinessField(f)
     if (!key) continue
+    if (hideCompanyTag && key === 'companyTag') continue
     const raw = ext[key]
     let value: string
     if (f.dataType === 'DATE' || f.dataType === 'DATETIME') {
@@ -426,7 +432,14 @@ const archiveInfoItems = computed(() => {
   const docOrg = { label: '文档组织', value: cell(d.documentOrganizationCode) }
   const archiveType = { label: '档案类型', value: cell(d.archiveTypeCode) }
   const visibility = { label: '是否可见', value: cell(d.documentVisibility ?? ext.visibility ?? '是') }
-  const custodyStatus = { label: '保管状态', value: cell(d.custodyStatus || d.archiveStatus) }
+  const retentionYears = {
+    label: '保存期限（年）',
+    value:
+      d.retentionPeriodYears != null && Number.isFinite(d.retentionPeriodYears)
+        ? String(d.retentionPeriodYears)
+        : '-'
+  }
+  const custodyStatus = { label: '保管状态', value: cell(d.custodyStatus) }
   const copies = { label: '份数', value: isPureElectronicCarrier(d.carrierTypeCode) ? '-' : extCell('copies') }
   const barcodeModule = { label: '条码模块', value: extCell('barcodeModule') }
   const isElectronic = isPureElectronicCarrier(d.carrierTypeCode)
@@ -439,17 +452,20 @@ const archiveInfoItems = computed(() => {
   const isUnarchivedLifecycle = isUnarchivedValue(d.lifecycleStatus) || isUnarchivedValue(d.archiveStatus)
 
   if (isUnarchivedLifecycle) {
-    return [docOrg, archiveType, visibility, custodyStatus, copies, barcodeModule]
+    return [docOrg, archiveType, visibility, retentionYears, custodyStatus, copies, barcodeModule]
   }
 
   return [
     docOrg,
     archiveType,
     visibility,
+    retentionYears,
     custodyStatus,
     copies,
     barcodeModule,
     { label: '档案条码', value: isElectronic ? '-' : extCell('archiveBarcodeRange', 'archiveBarcode') },
+    { label: '签收日期', value: isElectronic ? '-' : extDateCell('signDate') },
+    { label: '签收人', value: isElectronic ? '-' : extCell('signedBy') },
     { label: '核销日期', value: isElectronic ? '-' : extDateCell('verificationDateRange', 'verificationDate') },
     { label: '核销人', value: isElectronic ? '-' : extCell('verifiedBy', 'verificationBy') },
     { label: '文档编号', value: isElectronic ? '-' : extCell('volumeSeqNo') },

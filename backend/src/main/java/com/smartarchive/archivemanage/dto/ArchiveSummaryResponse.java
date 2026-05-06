@@ -41,7 +41,7 @@ public class ArchiveSummaryResponse {
     /** 生命周期状态原始编码（如 UNARCHIVED/ARCHIVED/DRAFT） */
     private String lifecycleStatus;
     private String custodyStatus;
-    /** 是否可见（fdc_document_t.attr1），在归档信息区展示，勿放入扩展信息 */
+    /** 是否可见（fdc_document_t.visible_flag 映射为「是」「否」），在归档信息区展示 */
     private String documentVisibility;
     private String parseStatus;
     private String vectorStatus;

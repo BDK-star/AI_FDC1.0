@@ -19,4 +19,15 @@ public interface PendingArchiveBatchImportService {
         List<PendingAuditAttachmentRef> auditAttachments,
         long operatorUserId
     );
+
+    /**
+     * 应归档批量更新：模板列与批量创建一致；按「文档业务编码 + 公司 + 业务模块 + 开始档期」定位未归档正式行后合并修改其余字段。
+     */
+    WorkspaceIoJobSummaryResponse submitAdjust(
+        MultipartFile file,
+        String documentTypeCode,
+        String operationRemark,
+        List<PendingAuditAttachmentRef> auditAttachments,
+        long operatorUserId
+    );
 }

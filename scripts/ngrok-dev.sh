@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# 本地开发通过 ngrok 暴露服务（需已安装 ngrok 并登录：https://ngrok.com ）
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "项目根目录: $ROOT"
+echo ""
+echo "【推荐 · 只开一条隧道】只把前端 Vite 暴露到公网，API 仍走本机代理："
+echo "  1) 终端 A: 启动后端 (默认 8080)"
+echo "  2) 终端 B: cd frontend && npm run dev"
+echo "  3) 终端 C: ngrok http 5175"
+echo "  用 ngrok 给出的 https URL 打开页面即可（勿设置 VITE_API_BASE_URL）。"
+echo ""
+echo "【两条隧道】前端、后端各一个 ngrok 地址时："
+echo "  终端 A: ngrok http 8080   → 复制 https 地址"
+echo "  终端 B: cd frontend && 创建 .env.local，写入一行（无尾斜杠）："
+echo "           VITE_API_BASE_URL=https://xxxx.ngrok-free.app"
+echo "  终端 C: npm run dev"
+echo "  终端 D: ngrok http 5175"
+echo "  浏览器打开「前端」ngrok URL；后端 CORS 已放行 *.ngrok 域名。"
+echo ""
+echo "可选：若后端不在本机 8080，启动 Vite 前设置:"
+echo "  export VITE_DEV_PROXY_TARGET=http://127.0.0.1:你的端口"

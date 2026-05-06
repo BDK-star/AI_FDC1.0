@@ -1,6 +1,7 @@
 package com.smartarchive.archivemanage.service.support;
 
 import com.smartarchive.archivemanage.dto.DocumentTypeExtFieldResponse;
+import com.smartarchive.businessmodule.dto.BusinessModuleExtFieldResponse;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -57,6 +58,7 @@ public final class PendingArchiveBatchImportHeaderResolver {
         putCn("公司标签", "companyTag");
         putCn("发票号", "invoiceNo");
         putCn("其他相关编号", "refNo");
+        putCn("其他文档编号", "refNo");
         putCn("会计", "accountant");
         putCn("扫描员", "scannedBy");
         putCn("开立日期", "issueDateRange");
@@ -128,6 +130,36 @@ public final class PendingArchiveBatchImportHeaderResolver {
             String name = f.getFieldName() != null ? f.getFieldName().trim() : "";
             if (StringUtils.hasText(name)) {
                 m.putIfAbsent(name, code);
+            }
+        }
+        return m;
+    }
+
+    /**
+     * 业务模块扩展：中文名 / fieldCode → 写入应归档使用的键（优先 englishFieldName，否则 fieldCode）。
+     */
+    public static Map<String, String> buildBusinessModuleExtDisplayToKeyMap(List<BusinessModuleExtFieldResponse> fields) {
+        Map<String, String> m = new LinkedHashMap<>();
+        if (fields == null) {
+            return m;
+        }
+        for (BusinessModuleExtFieldResponse f : fields) {
+            if (f == null || !"Y".equalsIgnoreCase(f.getEnabledFlag())) {
+                continue;
+            }
+            String en = f.getEnglishFieldName() != null ? f.getEnglishFieldName().trim() : "";
+            String fc = f.getFieldCode() != null ? f.getFieldCode().trim() : "";
+            String canonical = StringUtils.hasText(en) ? en : fc;
+            if (!StringUtils.hasText(canonical)) {
+                continue;
+            }
+            m.putIfAbsent(canonical, canonical);
+            if (StringUtils.hasText(fc)) {
+                m.putIfAbsent(fc, canonical);
+            }
+            String name = f.getFieldName() != null ? f.getFieldName().trim() : "";
+            if (StringUtils.hasText(name)) {
+                m.putIfAbsent(name, canonical);
             }
         }
         return m;

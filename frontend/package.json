@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "ngrok:help": "bash ../scripts/ngrok-dev.sh",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "verify:pending-duty-person": "node ui-verify-pending-duty-person-reset-query.cjs"
+    "verify:pending-duty-person": "node ui-verify-pending-duty-person-reset-query.cjs",
+    "verify:pending-batch-template": "node scripts/verify-pending-batch-template.mjs"
   },
   "dependencies": {
     "@antv/x6": "latest",

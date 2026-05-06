@@ -119,7 +119,7 @@
               <el-cascader
                 :model-value="row.archiveDestinationPath ?? []"
                 :options="archiveDestinationOptions"
-                :props="{ value: 'value', label: 'label', children: 'children', emitPath: true, checkStrictly: false }"
+                :props="{ value: 'value', label: 'label', children: 'children', emitPath: true, checkStrictly: true }"
                 clearable
                 filterable
                 placeholder="请选择国家/省份/城市"
@@ -713,7 +713,7 @@ function pickerBusinessModuleLabel(row: any) {
 
 function syncRowArchivePathFromCode(row: TransferDetailRow) {
   row.archiveDestinationPath = [
-    ...buildArchiveDestinationPath(row.archPlaceAlpha2Code, provinceOptions.value, cityOptions.value)
+    ...buildArchiveDestinationPath(row.archPlaceAlpha2Code, countryOptions.value, provinceOptions.value, cityOptions.value)
   ]
 }
 

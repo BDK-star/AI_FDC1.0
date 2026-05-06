@@ -1,0 +1,98 @@
+-- Seed more countries for country dictionary.
+-- Compatible with both md_country (legacy) and fdc_country_t (normalized table).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'fdc_country_t'
+    ) THEN
+        INSERT INTO fdc_country_t (
+            country_code, country_name, sort_order, delete_flag,
+            created_by, creation_date, last_updated_by, last_update_date
+        ) VALUES
+        ('CN','中国',1,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('US','美国',2,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('SG','新加坡',3,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('DE','德国',4,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('AE','阿联酋',5,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('JP','日本',6,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('KR','韩国',7,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('GB','英国',8,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('FR','法国',9,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('IT','意大利',10,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('ES','西班牙',11,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('NL','荷兰',12,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('CH','瑞士',13,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('SE','瑞典',14,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('NO','挪威',15,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('DK','丹麦',16,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('CA','加拿大',17,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('AU','澳大利亚',18,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('NZ','新西兰',19,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('IN','印度',20,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('TH','泰国',21,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('MY','马来西亚',22,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('ID','印度尼西亚',23,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('VN','越南',24,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('PH','菲律宾',25,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('SA','沙特阿拉伯',26,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('QA','卡塔尔',27,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('KW','科威特',28,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('OM','阿曼',29,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('BH','巴林',30,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('ZA','南非',31,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('BR','巴西',32,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('MX','墨西哥',33,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('RU','俄罗斯',34,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('TR','土耳其',35,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP)
+        ON CONFLICT DO NOTHING;
+    ELSIF EXISTS (
+        SELECT 1
+          FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'md_country'
+    ) THEN
+        INSERT INTO md_country (
+            country_code, country_name, sort_order, delete_flag,
+            created_by, creation_date, last_updated_by, last_update_date
+        ) VALUES
+        ('CN','中国',1,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('US','美国',2,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('SG','新加坡',3,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('DE','德国',4,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('AE','阿联酋',5,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('JP','日本',6,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('KR','韩国',7,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('GB','英国',8,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('FR','法国',9,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('IT','意大利',10,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('ES','西班牙',11,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('NL','荷兰',12,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('CH','瑞士',13,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('SE','瑞典',14,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('NO','挪威',15,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('DK','丹麦',16,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('CA','加拿大',17,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('AU','澳大利亚',18,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('NZ','新西兰',19,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('IN','印度',20,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('TH','泰国',21,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('MY','马来西亚',22,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('ID','印度尼西亚',23,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('VN','越南',24,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('PH','菲律宾',25,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('SA','沙特阿拉伯',26,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('QA','卡塔尔',27,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('KW','科威特',28,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('OM','阿曼',29,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('BH','巴林',30,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('ZA','南非',31,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('BR','巴西',32,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('MX','墨西哥',33,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('RU','俄罗斯',34,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP),
+        ('TR','土耳其',35,'N',1,CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP)
+        ON CONFLICT DO NOTHING;
+    END IF;
+END $$;

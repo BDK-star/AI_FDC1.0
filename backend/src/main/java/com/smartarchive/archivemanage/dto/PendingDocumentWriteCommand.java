@@ -37,7 +37,7 @@ public class PendingDocumentWriteCommand {
     private String remark;
     private String documentOrganizationCode;
     private Integer retentionPeriodYears;
-    /** 如 UNARCHIVED，默认 UNARCHIVED */
+    /** 字典 ARCHIVE_CUSTODY_STATUS 编码（如 IN_STORAGE）；默认由后端填 IN_STORAGE */
     private String custodyStatus;
     /**
      * SUBMIT：正式保存（默认）；DRAFT：保存草稿（lifecycle_status=DRAFT，校验从宽）。

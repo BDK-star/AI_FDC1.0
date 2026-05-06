@@ -22,6 +22,12 @@ public class BusinessModuleNodeResponse {
     private String description;
     private String remark;
     private Integer sortOrder;
+    /** 关联的条码模块编码（业务表存储字段） */
+    private String barcodeModuleCode;
+    /** 条码模块主键，便于与其它接口衔接 */
+    private Long barcodeId;
+    private String barcodeCode;
+    private String barcodeName;
     private Long lastUpdatedBy;
     private LocalDateTime lastUpdateDate;
     private List<BusinessModuleNodeResponse> children = new ArrayList<>();

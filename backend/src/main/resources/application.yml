@@ -2,6 +2,9 @@ server:
   port: 8080
 
 spring:
+  # 无环境变量时默认启用 local，合并 application-local.yml（例如 smart_archive_clean）。
+  profiles:
+    default: local
   application:
     name: smart-archive-management-backend
   jackson:

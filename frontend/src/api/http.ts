@@ -9,9 +9,27 @@ export interface ApiResponse<T> {
   data: T
 }
 
+/**
+ * 仅在前端与后端使用「两条 ngrok 隧道」时需要配置（无尾斜杠）。
+ * 若只把 Vite 开发服映射到公网、/api 仍走本机代理，可留空。
+ */
+export function getApiBaseUrl(): string {
+  const raw = import.meta.env.VITE_API_BASE_URL as string | undefined
+  if (raw == null || typeof raw !== 'string') {
+    return ''
+  }
+  return raw.trim().replace(/\/$/, '')
+}
+
+function shouldAddNgrokBrowserBypassHeader(url: string, baseURL: string | undefined): boolean {
+  const combined = url.startsWith('http') ? url : `${baseURL ?? ''}${url}`
+  return /ngrok/i.test(combined)
+}
+
 const http = axios.create({
-  // Keep same-origin requests; API modules already prefix paths with /api.
-  baseURL: '',
+  // 默认空：与页面同源，由 Vite 把 /api 代理到 localhost:8080。
+  // 设置 VITE_API_BASE_URL 时指向后端公网地址（如第二条 ngrok）。
+  baseURL: getApiBaseUrl(),
   timeout: 15000
 })
 
@@ -19,6 +37,9 @@ http.interceptors.request.use((config) => {
   const headers = AxiosHeaders.from(config.headers ?? {})
   if (headers.get('X-User-Id') == null && headers.get('x-user-id') == null) {
     headers.set('X-User-Id', String(CURRENT_OPERATOR_USER_ID))
+  }
+  if (shouldAddNgrokBrowserBypassHeader(config.url ?? '', config.baseURL)) {
+    headers.set('ngrok-skip-browser-warning', 'true')
   }
   config.headers = headers
   return config

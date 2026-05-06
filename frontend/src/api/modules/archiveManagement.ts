@@ -1,4 +1,4 @@
-import http, { apiRequest, type ApiResponse } from '../http'
+import http, { apiRequest, getApiBaseUrl, type ApiResponse } from '../http'
 import { CURRENT_OPERATOR_USER_ID } from '../../constants/currentUser'
 import type {
   ArchiveAskResult,
@@ -77,7 +77,10 @@ export interface ArchiveQueryCommand {
   busiModuleCode?: string
   companyProjectCode?: string
   archiveTypeCode?: string
+  /** 多个业务模块编码（或）；与 archiveTypeCode 并存时以后端合并为准 */
+  archiveTypeCodes?: string[]
   carrierTypeCode?: string
+  carrierTypeCodes?: string[]
   securityLevelCode?: string
   beginPeriod?: string
   endPeriod?: string
@@ -89,6 +92,8 @@ export interface ArchiveQueryCommand {
   documentOrganizationCode?: string
   extFilters?: Record<string, string>
   excludeSubmittedTransferApplied?: boolean
+  /** 条码模块编码，多选为「或」 */
+  barcodeModuleCodes?: string[]
 }
 
 export interface ArchiveAskCommand {
@@ -101,7 +106,9 @@ export interface PendingDocumentQueryCommand {
   documentTypeCode?: string
   companyCode?: string
   archiveTypeCode?: string
+  archiveTypeCodes?: string[]
   carrierType?: string
+  carrierTypes?: string[]
   businessCode?: string
   /** 多条业务编码（优先于 businessCode 文本）；避免 JSON 内换行在传输中丢失 */
   businessCodes?: string[]
@@ -122,6 +129,14 @@ export interface PendingDocumentQueryCommand {
   dutyPerson?: string
   /** 与后端登录用户 id 对齐；未传则不按创建人过滤 */
   createdByUserId?: number
+  /** 条码模块编码，多选为「或」；仅筛选业务模块已映射到所选条码模块的文档 */
+  barcodeModuleCodes?: string[]
+  /** 档案类型编码（arch_type_code / ext.archiveType），多选为「或」 */
+  documentArchiveTypeCodes?: string[]
+  /** 与归档规则管理一致：国家/省/市级联叶子编码（fdc_document_t.arch_place_alpha2_code） */
+  archiveDestination?: string
+  /** 国家维表编码（fdc_document_t.origin_place_alpha2_code） */
+  originPlace?: string
 }
 
 export interface PendingDocumentRowResponse {
@@ -361,7 +376,8 @@ export interface PendingDocumentWriteCommand {
 }
 
 export interface PendingDocumentExportCommand {
-  docIds: number[]
+  /** 字符串数组，避免大整数 docId 经 JSON number 精度丢失导致导出无数据行 */
+  docIds: string[]
   exportFileFormat?: 'CSV' | 'EXCEL' | 'PDF'
   exportScope?: 'DOCUMENT_QUERY' | 'PENDING_ARCHIVE'
 }
@@ -386,6 +402,67 @@ export function createPendingDocumentsExportJob(data: PendingDocumentExportComma
   return apiRequest<WorkspaceIoJobSummary>(http.post('/api/archive-management/pending-documents/export-jobs', data))
 }
 
+/** 批量导出（同步下载 CSV，带 BOM，不经过「我的导出」任务） */
+export async function downloadPendingDocumentsCsv(data: PendingDocumentExportCommand): Promise<void> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (CURRENT_OPERATOR_USER_ID != null && CURRENT_OPERATOR_USER_ID > 0) {
+    headers['X-User-Id'] = String(CURRENT_OPERATOR_USER_ID)
+  }
+  const base = getApiBaseUrl()
+  const exportUrl = `${base}/api/archive-management/pending-documents/export-csv`
+  if (base && /ngrok/i.test(base)) {
+    headers['ngrok-skip-browser-warning'] = 'true'
+  }
+  const res = await fetch(exportUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data)
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    let msg = text
+    try {
+      const j = JSON.parse(text) as { msg?: string; message?: string }
+      msg = (j.msg || j.message || text).trim() || `HTTP ${res.status}`
+    } catch {
+      msg = text.trim() || `HTTP ${res.status}`
+    }
+    throw new Error(msg)
+  }
+  const buf = await res.arrayBuffer()
+  const blob = new Blob([buf], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const scopeLabel = data.exportScope === 'PENDING_ARCHIVE' ? '应归档数据' : '文档查询'
+  const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  a.download = `${scopeLabel}导出-${ts}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** 服务端生成的应归档批量创建模板 CSV（表头+示例行），与前端规则一致，可避免浏览器缓存旧脚本 */
+export function fetchPendingBatchImportTemplateCsv(params: {
+  documentTypeCode: string
+  companyProjectCode?: string
+  archiveTypeCode?: string
+  documentTypeName?: string
+}) {
+  const search = new URLSearchParams()
+  search.set('documentTypeCode', params.documentTypeCode)
+  if (params.companyProjectCode) search.set('companyProjectCode', params.companyProjectCode)
+  if (params.archiveTypeCode) search.set('archiveTypeCode', params.archiveTypeCode)
+  if (params.documentTypeName) search.set('documentTypeName', params.documentTypeName)
+  return http
+    .get<string>(`/api/archive-management/pending-documents/batch-import-template?${search.toString()}`, {
+      responseType: 'text',
+      transformResponse: [(data) => data as string]
+    })
+    .then((r) => r.data)
+}
+
 export function submitPendingArchiveBatchImport(params: {
   file: File
   documentTypeCode: string
@@ -403,6 +480,27 @@ export function submitPendingArchiveBatchImport(params: {
   }
   return apiRequest<WorkspaceIoJobSummary>(
     http.post('/api/archive-management/pending-documents/batch-import', form)
+  )
+}
+
+/** 应归档批量更新：模板与批量创建一致，按文档业务编码+公司+业务模块+开始档期定位正式未归档文档后更新 */
+export function submitPendingArchiveBatchAdjust(params: {
+  file: File
+  documentTypeCode: string
+  operationRemark?: string
+  auditAttachments?: PendingAuditAttachmentRef[]
+}) {
+  const form = new FormData()
+  form.append('file', params.file)
+  form.append('documentTypeCode', params.documentTypeCode)
+  if (params.operationRemark) {
+    form.append('operationRemark', params.operationRemark)
+  }
+  if (params.auditAttachments?.length) {
+    form.append('auditAttachmentsJson', JSON.stringify(params.auditAttachments))
+  }
+  return apiRequest<WorkspaceIoJobSummary>(
+    http.post('/api/archive-management/pending-documents/batch-import-adjust', form)
   )
 }
 
@@ -436,7 +534,9 @@ export async function downloadArchiveAttachment(attachmentId: number): Promise<B
 }
 
 export function previewArchiveAttachmentUrl(attachmentId: number): string {
-  return `/api/archive-management/attachments/${attachmentId}/preview`
+  const base = getApiBaseUrl()
+  const path = `/api/archive-management/attachments/${attachmentId}/preview`
+  return base ? `${base}${path}` : path
 }
 
 export async function downloadArchiveAttachmentsZip(archiveId: number): Promise<Blob> {
@@ -448,9 +548,15 @@ export async function uploadPendingAuditAttachment(file: File): Promise<PendingA
   const fd = new FormData()
   fd.append('file', file)
   // 使用 fetch 避免 axios 在部分环境下把 FormData 按 JSON 处理，导致后端 consumes 不匹配并返回「POST 不支持」
-  const res = await fetch('/api/archive-management/pending-documents/audit-attachments', {
+  const base = getApiBaseUrl()
+  const uploadUrl = `${base}/api/archive-management/pending-documents/audit-attachments`
+  const uploadHeaders: Record<string, string> = { 'X-User-Id': String(CURRENT_OPERATOR_USER_ID) }
+  if (base && /ngrok/i.test(base)) {
+    uploadHeaders['ngrok-skip-browser-warning'] = 'true'
+  }
+  const res = await fetch(uploadUrl, {
     method: 'POST',
-    headers: { 'X-User-Id': String(CURRENT_OPERATOR_USER_ID) },
+    headers: uploadHeaders,
     body: fd
   })
   const payload = (await res.json()) as ApiResponse<PendingAuditAttachmentRef>
@@ -459,6 +565,17 @@ export async function uploadPendingAuditAttachment(file: File): Promise<PendingA
     throw new Error(payload.msg || payload.message || 'Request failed')
   }
   return payload.data
+}
+
+export async function downloadPendingAuditAttachment(params: { fileId?: number; storageKey?: string }): Promise<Blob> {
+  const payloadParams: Record<string, any> = {}
+  if (params.fileId != null && Number(params.fileId) > 0) payloadParams.fileId = params.fileId
+  if (params.storageKey != null && String(params.storageKey).trim()) payloadParams.storageKey = String(params.storageKey).trim()
+  const res = await http.get('/api/archive-management/pending-documents/audit-attachments/download', {
+    params: payloadParams,
+    responseType: 'blob'
+  })
+  return res.data as Blob
 }
 
 export function transferArchives(data: ArchiveTransferCommand) {
